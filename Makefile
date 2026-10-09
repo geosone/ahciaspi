@@ -6,9 +6,16 @@ JWASM_EXE = jwasm
 # DLMANIP 0.35 beta source by Joe Forster/STA (public domain)
 DLMANIP_SRC = tools/dlmanip/DLMANIP.ASM
 
-all: build/AHCIASPI.SYS build/ASPITEST.COM
+# AHCIVXD.386 (Windows 3.x 32-bit disk access): Open Watcom, JWasm and a
+# JWlink with working Windows 3.x VxD output (LINK=path)
+LINK ?= jwlink
 
-build/AHCIASPI.SYS: src/ahciaspi.asm src/ahci.inc src/aspi.inc | build
+all: build/AHCIASPI.SYS build/ASPITEST.COM build/vxd/AHCIVXD.386
+
+build/vxd/AHCIVXD.386: vxd/AHCIVXD.C vxd/AHCIVXD.ASM vxd/AHCIRMI.ASM vxd/RTVXD.ASM vxd/VXD.INC
+	$(MAKE) -C vxd LINK=$(LINK)
+
+build/AHCIASPI.SYS: src/ahciaspi.asm src/ahci.inc src/aspi.inc src/biosfix.inc | build
 	$(NASM) $(NFLAGS) -Isrc/ -l build/ahciaspi.lst -o $@ $<
 
 build/ASPITEST.COM: tools/aspitest.asm src/aspi.inc | build
@@ -45,7 +52,7 @@ GDI ?= ../gdi/build/INSTALL.EXE
 PKG = build/pkg
 package: all dlmanip
 	rm -rf $(PKG) && mkdir -p $(PKG)
-	cp build/AHCIASPI.SYS build/ASPITEST.COM build/DLMANIPF.SYS build/DLMANIPF.COM $(PKG)/
+	cp build/AHCIASPI.SYS build/ASPITEST.COM build/DLMANIPF.SYS build/DLMANIPF.COM build/vxd/AHCIVXD.386 $(PKG)/
 	cp install/INSTALL.INI install/README.TXT install/DLMANIPF.TXT $(PKG)/
 	sed 's/$$/\r/' LICENSE > $(PKG)/LICENSE.TXT
 	cp $(GDI) $(PKG)/INSTALL.EXE

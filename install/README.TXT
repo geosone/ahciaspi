@@ -1,4 +1,4 @@
-AHCIASPI 0.1 - ASPI manager for ATAPI drives on AHCI and IDE controllers
+AHCIASPI 0.2 - ASPI manager for ATAPI drives on AHCI and IDE controllers
 ==========================================================================
 
 AHCIASPI.SYS is an ASPI manager (device SCSIMGR$) for DOS.  It makes ATAPI
@@ -52,11 +52,50 @@ and in AUTOEXEC.BAT for the CD-ROM:
     MSCDEX /D:ASPICD0 /L:R
 
 
+Windows 3.x: 32-bit disk access (AHCIVXD.386)
+----------------------------------------------
+
+AHCIVXD.386 is a "FastDisk" for Windows 3.1x enhanced mode, like WDCTRL or
+the Micro House driver, but for today's disks: SATA (AHCI) and IDE, LBA
+with 48 bit (disks of any size), DMA (AHCI always, IDE bus master when the
+BIOS set a DMA mode), 32-bit PIO otherwise.  Windows then reads and writes
+the hard disks without the BIOS (32-bit disk access, faster, and needed
+for the 32-bit file access of Windows for Workgroups 3.11 to work well).
+It also handles INT 13h of the DOS boxes for these disks, including the
+extended functions (41h-48h) that MS-DOS 7.x uses for LBA and FAT32
+partitions and that Windows 3.1 itself doesn't know.
+
+The BIOS disks 80h-83h are found on the controllers by their first
+sector.  INSTALL adds to SYSTEM.INI, [386Enh]:
+
+    device=*int13
+    device=C:\AHCIASPI\AHCIVXD.386
+    32BitDiskAccess=on
+
+(and removes device=*wdctrl).  Options in SYSTEM.INI, [AHCIVXD]:
+DMA=0 (no DMA), PIO32=0 (16-bit PIO), Int13=0 (don't handle the INT 13h
+of the DOS boxes), BiosFix=0 (no BIOS VDS fix, see below), LogPort=n
+(debug output to I/O port n, e.g. 233 = E9h for QEMU).
+
+BIOS VDS fix (Intel AHCI firmware)
+----------------------------------
+
+The INT 13h code of Intel AHCI option ROMs uses the Virtual DMA Services
+of memory managers wrongly (unlock with the wrong segment register, data
+written over the start of the EBDA), which crashes Windows 3.1 enhanced
+mode and can disturb EMM386.  AHCIASPI.SYS works around it in DOS (on by
+default with an Intel AHCI controller, /BIOSFIX forces it, /NOBIOSFIX
+turns it off; without ATAPI devices only this part stays resident, as
+AHCIFIX$), AHCIVXD.386 under Windows.  Based on ahcifix.386 and
+ahcifixd.sys by PluMGMK.
+
+
 Switches
 --------
 
     DEVICE=AHCIASPI.SYS [/C:n] [/ID:name] [/M:x] [/PIO] [/RAWINQ] [/T:s]
                         [/Q] [/V] [/NOAHCI] [/NOIDE] [/NOPCI] [/P:port[,ctl]]
+                        [/BIOSFIX] [/NOBIOSFIX]
 
   /C:n        Use the AHCI controller n (0 = first, the default).
   /ID:name    ASPI manager name reported to the clients (up to 16
@@ -81,6 +120,8 @@ Switches
   /P:port[,ctl]
               Additional IDE channel at I/O port "port" (hex) with the
               control port "ctl" (default port+206h).  May be repeated.
+  /BIOSFIX    BIOS VDS fix on (default: on with an Intel AHCI controller).
+  /NOBIOSFIX  BIOS VDS fix off.
 
 Several ASPI managers: if another ASPI manager (USBASPI.SYS, EUSBASPI.SYS,
 ASPI8DOS.SYS, ...) is loaded before AHCIASPI, AHCIASPI chains to it.  Its
@@ -91,6 +132,7 @@ Files
 -----
 
   AHCIASPI.SYS   the driver
+  AHCIVXD.386    32-bit disk access for Windows 3.1x enhanced mode
   ASPITEST.COM   test program: lists the ASPI host adapters and devices
   README.TXT     this file
   LICENSE.TXT    GNU General Public License version 3

@@ -41,6 +41,26 @@ and `AUTOEXEC.BAT`:
 
     MSCDEX /D:ASPICD0
 
+## Windows 3.x: 32-bit disk access (AHCIVXD.386)
+
+`AHCIVXD.386` is an open source "FastDisk" for Windows 3.1x enhanced mode - what WDCTRL (and the Micro House driver for larger disks) did for old IDE disks, for today's hardware:
+
+- SATA disks on AHCI controllers and IDE disks (PCI native and legacy channels),
+- LBA48 (any size), DMA (AHCI always; IDE bus master when the BIOS set a DMA mode), else 32-bit PIO,
+- registers the BIOS disks 80h-83h with BlockDev, so Windows (paging, 32-bit file access of WfW 3.11, DOS boxes) uses them without the BIOS,
+- handles INT 13h of the DOS boxes for these disks, including the extended functions 41h-48h that MS-DOS 7.x uses for LBA/FAT32 partitions (Windows 3.1's Int13 device doesn't know them),
+- the BIOS VDS fix for Intel AHCI firmware (see below) for disks still driven by the BIOS.
+
+The installer option adds `device=*int13`, `device=C:\AHCIASPI\AHCIVXD.386` and `32BitDiskAccess=on` to `[386Enh]` of `SYSTEM.INI` (and removes `*wdctrl`). Settings in `[AHCIVXD]`: `DMA=0`, `PIO32=0`, `Int13=0`, `BiosFix=0`, `LogPort=233` (debug output to port E9h in QEMU).
+
+How it works: the real mode part reads each BIOS disk's first sector through the BIOS and passes its CRC-32 in the BIOS intra-application area; in `Sys_Critical_Init` the VxD finds the disks on the controllers by it and registers them with BlockDev (as WDCTRL does, the geometry from the BIOS fixed disk tables); in `Device_Init` it asks the BIOS (nested V86 execution) for the geometry and size and hooks INT 13h. Each AHCI command saves and restores the BIOS's port state, so the BIOS (and AHCIASPI in DOS boxes) keep working on the same controller. Written from the documented BlockDev/Int13/VMM interfaces.
+
+**Status:** first version, tested in QEMU with Windows for Workgroups 3.11 (IDE with bus master DMA, AHCI): Windows' BlockDev requests and the DOS boxes' INT 13h (CHS and 41h-48h) run through it, copies are byte-identical. Not yet tested on real hardware.
+
+## BIOS VDS fix (Intel AHCI firmware)
+
+The INT 13h code of Intel AHCI option ROMs uses the Virtual DMA Services of memory managers wrongly: it unlocks a region with the descriptor in DS instead of ES, and puts the descriptor at the start of the EBDA (overwriting e.g. the PS/2 mouse data). This crashes Windows 3.1 enhanced mode and can disturb EMM386. `AHCIASPI.SYS` works around it in DOS - on by default with an Intel AHCI controller, `/BIOSFIX` forces it, `/NOBIOSFIX` turns it off; without ATAPI devices only this part stays resident (as `AHCIFIX$`) - and `AHCIVXD.386` under Windows. Based on [ahcifix.386](https://github.com/PluMGMK/ahcifix.386) and [ahcifixd.sys](https://github.com/PluMGMK/ahcifixd.sys) (MIT) by PluMGMK.
+
 ## Switches
 
     DEVICE=AHCIASPI.SYS [/C:n] [/ID:name] [/M:x] [/PIO] [/RAWINQ] [/T:s]
@@ -58,6 +78,7 @@ and `AUTOEXEC.BAT`:
 | `/NOAHCI`, `/NOIDE` | no AHCI controllers, no IDE channels |
 | `/NOPCI` | only the standard IDE channels, no PCI IDE cards |
 | `/P:port[,ctl]` | additional IDE channel (hex), control port default port+206h; may be repeated |
+| `/BIOSFIX`, `/NOBIOSFIX` | BIOS VDS fix on / off (default: on with an Intel AHCI controller) |
 
 ## DLMANIPF
 
@@ -67,18 +88,21 @@ and `AUTOEXEC.BAT`:
 
 Linux (or any system with the tools), GNU make:
 - [NASM](https://nasm.us) for `AHCIASPI.SYS` and the tools,
-- [JWasm](https://github.com/Baron-von-Riedesel/JWasm) for DLMANIPF,
+- [JWasm](https://github.com/Baron-von-Riedesel/JWasm) for DLMANIPF and AHCIVXD,
+- Open Watcom (`wcc386`) and a JWlink with working Windows 3.x VxD output (`LINK=path`, see [jwlink PR #17](https://github.com/Baron-von-Riedesel/jwlink/pull/17)) for AHCIVXD,
 - the [GeosOne DOS Installer](https://github.com/geosone/gdi) (`../gdi/build/INSTALL.EXE`, or `make package GDI=path`) for the package.
 
 | Command | |
 |---|---|
-| `make` | `build/AHCIASPI.SYS`, `build/ASPITEST.COM` |
+| `make` | `build/AHCIASPI.SYS`, `build/ASPITEST.COM`, `build/vxd/AHCIVXD.386` |
 | `make dlmanip` | `build/DLMANIPF.SYS`, `build/DLMANIPF.COM` |
 | `make package` | `build/pkg/` and `build/ahciaspi.zip` |
 
 Build with `-DE9LOG` (nasm) to get every ASPI command on the QEMU debug console (`-debugcon file:e9.log`).
 
 ## Tests
+
+`test/fastdisk.sh` (AHCIVXD in WfW 3.11, `DISK=ide|ahci`, runs `EXT13.COM` and copies files) and `test/biosfix.sh` (the BIOS VDS fix under EMM386) need the WfW image of EUSBASPI's `test/mkwin311.sh`.
 
 `test/*.sh` run DOS in QEMU, 86Box or with Windows for Workgroups 3.11. They need your own DOS boot disk image and, for some tests, third-party drivers (ASPICD, MKELS120, GUEST, USBASPI, ...) in a directory `ref/`, which is not part of the repository.
 

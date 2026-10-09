@@ -12,6 +12,10 @@
 ; CONFIG.SYS:
 ;   DEVICE=AHCIASPI.SYS [/C:n] [/ID:name] [/M:x] [/PIO] [/RAWINQ] [/T:s] [/Q] [/V]
 ;                       [/NOAHCI] [/NOIDE] [/NOPCI] [/P:port[,ctl]]
+;                       [/BIOSFIX] [/NOBIOSFIX]
+;
+; /BIOSFIX: work around the VDS bugs of Intel AHCI firmware under EMM386
+; (biosfix.inc; on by default with an Intel AHCI controller)
 ;
 ; Design notes
 ; - Register access to the HBA goes through one of four methods: the AHCI
@@ -44,7 +48,7 @@
 %include "ahci.inc"
 %include "aspi.inc"
 
-%define VERSION_STR '0.1'
+%define VERSION_STR '0.2'
 
 NPRD            equ     8               ; PRDT entries per command
 BOUNCE_SIZE     equ     800h            ; bounce buffer (2 KB, 2 KB aligned)
@@ -2550,6 +2554,8 @@ auto_sense:
 ;-----------------------------------------------------------------------------
 ; Stack and DMA area
 ;-----------------------------------------------------------------------------
+%include "biosfix.inc"
+
                 align   16
 stack_bottom:   times STACK_SIZE db 0
 stack_top:
@@ -2568,6 +2574,8 @@ opt_pio         db      0               ; /PIO
 opt_quiet       db      0               ; /Q
 opt_verbose     db      0               ; /V
 opt_noahci      db      0               ; /NOAHCI
+opt_biosfix     db      0               ; 1 = /BIOSFIX, 2 = /NOBIOSFIX
+intel_ahci      db      0               ; an Intel AHCI controller was found
 opt_noide       db      0               ; /NOIDE
 opt_nopci       db      0               ; /NOPCI
 ide_count       db      2               ; IDE channels to scan
@@ -2647,6 +2655,8 @@ init:
         call    print
         jmp     .ide
 .ctl_ok:
+        cmp     word [pci_vendev], 8086h  ; Intel firmware: BIOS VDS fix
+        sete    byte [intel_ahci]
         call    choose_method
         jnc     .method_ok
         jmp     init_fail
@@ -2665,9 +2675,33 @@ init:
 .scanned:
         cmp     byte [dev_count], 0
         jne     .found
-        mov     si, msg_no_dev
+        ; no ATAPI device: stay resident only for the BIOS VDS fix (as
+        ; AHCIFIX$, no ASPI manager), if it is wanted
+        cmp     byte [opt_biosfix], 2
+        je      .nodev
+        cmp     byte [opt_biosfix], 1
+        je      .fixonly
+        cmp     byte [intel_ahci], 0
+        je      .nodev
+.fixonly:
+        mov     dword [hdr_name], 'AHCI'
+        mov     dword [hdr_name+4], 'FIX$'
+        call    bf_install
+        mov     si, msg_fix_only
+        call    print
+        jmp     .resident
+.nodev: mov     si, msg_no_dev
         jmp     init_fail
 .found:
+        cmp     byte [opt_biosfix], 2
+        je      .nofix
+        cmp     byte [opt_biosfix], 1
+        je      .fix
+        cmp     byte [intel_ahci], 0
+        je      .nofix
+.fix:   call    bf_install
+.nofix:
+.resident:
         les     bx, [req_ptr]
         mov     word [es:bx+RQ_END], resident_end
         mov     [es:bx+RQ_END+2], cs
@@ -2690,6 +2724,37 @@ init_out:
         pop     ds
         popad
         ret
+
+; install the BIOS VDS fix (biosfix.inc): filters on DOS's INT 13h pointers
+; and the INT 2Fh hook
+bf_install:
+        push    ds
+        push    es
+        mov     ah, 13h                 ; DOS's pointers -> our filters
+        mov     dx, bf_int13
+        mov     bx, bf_int13_rom
+        int     2Fh                     ; DS:DX, ES:BX = the previous ones
+        mov     [cs:bf_dos13], dx
+        mov     [cs:bf_dos13+2], ds
+        mov     [cs:bf_rom13], bx
+        mov     [cs:bf_rom13+2], es
+        pop     es
+        pop     ds
+        push    es
+        mov     ax, 352Fh
+        int     21h
+        mov     [bf_old2f], bx
+        mov     [bf_old2f+2], es
+        pop     es
+        mov     ax, 252Fh
+        mov     dx, bf_int2f
+        int     21h
+        or      byte [bf_flags], 1
+        cmp     byte [opt_quiet], 0
+        jne     .q
+        mov     si, msg_biosfix
+        call    print
+.q:     ret
 
 ; CF if the CPU is older than a 386
 check_386:
@@ -2764,6 +2829,8 @@ parse_cmdline:
         je      .opt_r
         cmp     al, 'N'
         je      .opt_n
+        cmp     al, 'B'
+        je      .opt_b
 .bad:   push    si
         mov     si, msg_bad_opt
         call    print
@@ -2843,8 +2910,19 @@ parse_cmdline:
 .opt_n3:
         mov     di, kw_nopci
         call    match_kw
-        jc      .bad
+        jc      .opt_n4
         mov     byte [opt_nopci], 1
+        jmp     .args
+.opt_n4:
+        mov     di, kw_nobiosfix
+        call    match_kw
+        jc      .bad
+        mov     byte [opt_biosfix], 2
+        jmp     .args
+.opt_b: mov     di, kw_biosfix          ; /BIOSFIX
+        call    match_kw
+        jc      .bad
+        mov     byte [opt_biosfix], 1
         jmp     .args
 .opt_pio:
         mov     al, [es:si]             ; /PIO
@@ -2917,6 +2995,8 @@ kw_rawinq       db      'AWINQ', 0
 kw_noahci       db      'OAHCI', 0
 kw_noide        db      'OIDE', 0
 kw_nopci        db      'OPCI', 0
+kw_nobiosfix    db      'OBIOSFIX', 0
+kw_biosfix      db      'IOSFIX', 0
 
 ; hexadecimal number at ES:SI -> AX.  CF if none.
 get_hex:
@@ -4010,6 +4090,8 @@ msg_no_ctl      db      'No AHCI controller found', 13, 10, 0
 msg_bad_bar     db      'AHCI controller has no memory BAR', 13, 10, 0
 msg_dead        db      'AHCI registers not accessible', 13, 10, 0
 msg_vds_fail    db      'VDS lock of DMA buffers failed', 13, 10, 0
+msg_biosfix     db      '  BIOS VDS fix for the AHCI firmware active', 13, 10, 0
+msg_fix_only    db      '  no ATAPI devices: only the BIOS VDS fix stays resident', 13, 10, 0
 msg_bad_method  db      'Requested access method not available', 13, 10, 0
 msg_no_a20      db      'Cannot enable A20 for flat mode', 13, 10, 0
 msg_no_dev      db      'No ATAPI devices found', 13, 10, 0
