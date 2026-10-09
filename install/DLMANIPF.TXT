@@ -1,0 +1,27 @@
+DLMANIPF - Drive Letter Manipulator 0.35 with fixes
+===================================================
+
+DLMANIPF.SYS and DLMANIPF.COM are built from the public domain source of
+DLMANIP 0.35 beta by Joe Forster/STA.  Many thanks to the author.  The
+commands and switches are the same as in the original; see the
+documentation of the original DLMANIP package by Joe Forster/STA.
+
+This is a modified version, not the original program.  Please do not
+report problems with it to the author of DLMANIP.
+
+Changes:
+  - The unit number of drives that belong to installable block drivers
+    (MKELS120.SYS, GUEST.EXE, ASPIDISK.SYS, ...) is kept.  The original
+    gave them the new drive number, and these drivers then got requests
+    for units they do not have ("invalid unit").
+  - Swapping with a letter that has no drive (e.g. B: without a second
+    floppy drive) no longer writes through a NULL pointer (the original
+    overwrote the INT 0 vector).
+  - Letters left unassigned by MOVE are skipped (the original wrote far
+    behind the end of the CDS array).
+  - Redirected drives (MSCDEX CD-ROM drives, network drives) keep their
+    own CDS.
+  - The debugging INT 3 has been removed.
+
+Source of the changes: tools/dlmanip/prep.py in
+https://github.com/geosone/ahciaspi
