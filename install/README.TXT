@@ -1,4 +1,4 @@
-AHCIASPI 0.2 - ASPI manager for ATAPI drives on AHCI and IDE controllers
+AHCIASPI 0.3 - ASPI manager for ATAPI drives on AHCI and IDE controllers
 ==========================================================================
 
 AHCIASPI.SYS is an ASPI manager (device SCSIMGR$) for DOS.  It makes ATAPI
@@ -22,8 +22,9 @@ Installation
 ------------
 
 Run INSTALL.EXE from the distribution disk or directory.  It copies the
-files and adds AHCIASPI.SYS to CONFIG.SYS.  INSTALL /U in the installation
-directory removes it again.
+files to C:\OPENASPI (shared with EUSBASPI and OpenASPI) and adds
+AHCIASPI.SYS to CONFIG.SYS.  INSTALL /U in C:\OPENASPI\AHCIASPI removes
+it again.
 
 CD-ROM drive (option, on by default): if INSTALL finds ASPICD.SYS and
 MSCDEX.EXE or SHSUCDX (in C:\DOS, the PATH, the Windows directory or the

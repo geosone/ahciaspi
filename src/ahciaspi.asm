@@ -48,7 +48,7 @@
 %include "ahci.inc"
 %include "aspi.inc"
 
-%define VERSION_STR '0.2'
+%define VERSION_STR '0.3'
 
 NPRD            equ     8               ; PRDT entries per command
 BOUNCE_SIZE     equ     800h            ; bounce buffer (2 KB, 2 KB aligned)

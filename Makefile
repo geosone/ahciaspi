@@ -57,5 +57,7 @@ package: all dlmanip
 	sed 's/$$/\r/' LICENSE > $(PKG)/LICENSE.TXT
 	cp $(GDI) $(PKG)/INSTALL.EXE
 	cd $(PKG) && rm -f ../ahciaspi.zip && zip -q -9 ../ahciaspi.zip *
+	# a 1.44 MB disk (mtools), e.g. for mkdosset.ps1 -Extra of msdosinst
+	cd $(PKG) && rm -f ../AHCIASPI.IMG && mformat -C -f 1440 -v AHCIASPI -i ../AHCIASPI.IMG :: && mcopy -i ../AHCIASPI.IMG * ::
 
 .PHONY: package

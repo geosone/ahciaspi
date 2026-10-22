@@ -14,7 +14,7 @@ It also works in the DOS boxes of Windows 3.x, and together with other ASPI mana
 
 ## Installation
 
-Download the ZIP of the [latest release](https://github.com/geosone/ahciaspi/releases), unpack it to a disk or directory and run `INSTALL.EXE` (the [GeosOne DOS Installer](https://github.com/geosone/gdi)). It copies the files to `C:\AHCIASPI`, adds the driver to `CONFIG.SYS` and can set up:
+Download the ZIP of the [latest release](https://github.com/geosone/ahciaspi/releases), unpack it to a disk or directory and run `INSTALL.EXE` (the [GeosOne DOS Installer](https://github.com/geosone/gdi)). It copies the files to `C:\OPENASPI` (shared with EUSBASPI and OpenASPI; the installer itself goes to `C:\OPENASPI\AHCIASPI`), adds the driver to `CONFIG.SYS` and can set up:
 
 | Option | |
 |---|---|
@@ -24,12 +24,12 @@ Download the ZIP of the [latest release](https://github.com/geosone/ahciaspi/rel
 | Drive letter tools | `DLMANIPF.SYS`/`.COM` (see below) |
 
 **ASPI drivers.** `ASPICD.SYS`, `ASPIDISK.SYS` and `MKELS120.SYS` are not free software and are not part of AHCIASPI. The installer finds them:
-1. **on the installation disk:** copy them next to `INSTALL.EXE` (e.g. onto the AHCIASPI disk), and the installer installs these copies to `C:\AHCIASPI`;
+1. **on the installation disk:** copy them next to `INSTALL.EXE` (e.g. onto the AHCIASPI disk), and the installer installs these copies to `C:\OPENASPI`;
 2. otherwise **on the computer:** in `C:\DOS`, the `PATH`, the Windows directory or the paths named in `CONFIG.SYS`/`AUTOEXEC.BAT` (MS-DOS 7.1 has `ASPICD.SYS` and `MSCDEX.EXE` in `C:\DOS`).
 
 The same holds for `MSCDEX.EXE` / `SHSUCDX.COM`. Options whose driver is found nowhere are left out.
 
-`INSTALL /U` in `C:\AHCIASPI` removes the installation again.
+`INSTALL /U` in `C:\OPENASPI\AHCIASPI` removes the installation again; `C:\OPENASPI` stays while EUSBASPI or OpenASPI are still there.
 
 By hand, `CONFIG.SYS`:
 
@@ -96,7 +96,7 @@ Linux (or any system with the tools), GNU make:
 |---|---|
 | `make` | `build/AHCIASPI.SYS`, `build/ASPITEST.COM`, `build/vxd/AHCIVXD.386` |
 | `make dlmanip` | `build/DLMANIPF.SYS`, `build/DLMANIPF.COM` |
-| `make package` | `build/pkg/` and `build/ahciaspi.zip` |
+| `make package` | `build/pkg/`, `build/ahciaspi.zip` and the disk image `build/AHCIASPI.IMG` (mtools) |
 
 Build with `-DE9LOG` (nasm) to get every ASPI command on the QEMU debug console (`-debugcon file:e9.log`).
 
