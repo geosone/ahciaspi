@@ -1,6 +1,6 @@
 # AHCIASPI - ASPI manager for ATAPI drives on AHCI and IDE controllers
 
-`AHCIASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It makes ATAPI drives - CD/DVD, ZIP, LS-120/LS-240, tape and others - usable for DOS ASPI drivers such as `ASPICD.SYS`, `ASPIDISK.SYS`, `MKELS120.SYS` or `GUEST.EXE`.
+`AHCIASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It makes ATAPI drives - CD/DVD, ZIP, LS-120/LS-240, tape and others - usable for DOS ASPI drivers: the [OpenASPI](https://github.com/geosone/OpenAspi) drivers that come with it, or others such as Adaptec's `ASPICD.SYS`, `ASPIDISK.SYS`, `MKELS120.SYS` or `GUEST.EXE`.
 
 The drives can be connected to:
 - an AHCI SATA controller, directly or through a SATA/IDE adapter,
@@ -14,32 +14,37 @@ It also works in the DOS boxes of Windows 3.x, and together with other ASPI mana
 
 ## Installation
 
-Download the ZIP of the [latest release](https://github.com/geosone/ahciaspi/releases), unpack it to a disk or directory and run `INSTALL.EXE` (the [GeosOne DOS Installer](https://github.com/geosone/gdi)). It copies the files to `C:\OPENASPI` (shared with EUSBASPI and OpenASPI; the installer itself goes to `C:\OPENASPI\AHCIASPI`), adds the driver to `CONFIG.SYS` and can set up:
+Download the ZIP of the [latest release](https://github.com/geosone/ahciaspi/releases), unpack it to a disk or directory and run `INSTALL.EXE` (the [GeosOne DOS Installer](https://github.com/geosone/gdi)). It copies the files to `C:\OPENASPI` (shared with EUSBASPI and OpenASPI; the installer itself goes to `C:\OPENASPI\AHCIASPI`), adds the driver to `CONFIG.SYS` and can set up the [OpenASPI](https://github.com/geosone/OpenAspi) drivers that come with it, each one an option, loaded after `AHCIASPI.SYS`:
 
 | Option | |
 |---|---|
-| CD-ROM drive | `ASPICD.SYS` in `CONFIG.SYS`, `/D:ASPICD0` for `MSCDEX` or `SHSUCDX` in `AUTOEXEC.BAT` |
-| ZIP, LS-120 etc. as DOS drives | `ASPIDISK.SYS` |
-| LS-120/LS-240 drives | `MKELS120.SYS` |
+| CD/DVD drives (on) | `ASPICDA.SYS /D:ASPICDA0`; [SHSUCDX](https://github.com/geosone/shsucd) in the place of `MSCDEX` (MS-DOS) or `NWCDEX` (DR-DOS) in `AUTOEXEC.BAT`, with digital CD audio through [VSBHDA](https://github.com/geosone/VSBHDA) (`CDAUDIO.COM`) |
+| ZIP, LS-120, LS-240, Clik!, Jaz (on) | `ASPIFDD.SYS` |
+| Disks, card readers, USB sticks | `ASPIDSK.SYS` |
+| Tape drives | `ASPITAP.SYS`, `TAPECTL.COM` |
 | Drive letter tools | `DLMANIPF.SYS`/`.COM` (see below) |
+| Windows 3.x (on) | `AHCIVXD.386` (see below) |
+| PATH (on) | `C:\OPENASPI` in the `PATH` |
 
-**ASPI drivers.** `ASPICD.SYS`, `ASPIDISK.SYS` and `MKELS120.SYS` are not free software and are not part of AHCIASPI. The installer finds them:
-1. **on the installation disk:** copy them next to `INSTALL.EXE` (e.g. onto the AHCIASPI disk), and the installer installs these copies to `C:\OPENASPI`;
-2. otherwise **on the computer:** in `C:\DOS`, the `PATH`, the Windows directory or the paths named in `CONFIG.SYS`/`AUTOEXEC.BAT` (MS-DOS 7.1 has `ASPICD.SYS` and `MSCDEX.EXE` in `C:\DOS`).
+With AHCIASPI already loaded, `ASPISCAN.COM` finds disks and tape drives and preselects their options. OpenASPI and SHSUCD have installers of their own; all of them share `C:\OPENASPI`, so each can be installed alone or together.
 
-The same holds for `MSCDEX.EXE` / `SHSUCDX.COM`. Options whose driver is found nowhere are left out.
+**CD-ROM.** The installer takes the CD-ROM extension in this order: `SHSUCDX.COM` of the installation disk, else `SHSUCDX`, `MSCDEX.EXE`, `NWCDEX.EXE` on the computer. An existing `MSCDEX`/`NWCDEX` line keeps its drivers and drive letters, starts SHSUCDX instead (SHSUCDX ignores the MSCDEX options it doesn't have) and gets `/D:ASPICDA0`; `INSTALL /U` puts MSCDEX or NWCDEX back.
+
+**From 0.3:** remove 0.3 first (`INSTALL /U` in `C:\OPENASPI\AHCIASPI`): it loaded Adaptec's `ASPICD.SYS`, `ASPIDISK.SYS` and `MKELS120.SYS`, which use the same drives as the OpenASPI drivers.
 
 `INSTALL /U` in `C:\OPENASPI\AHCIASPI` removes the installation again; `C:\OPENASPI` stays while EUSBASPI or OpenASPI are still there.
 
 By hand, `CONFIG.SYS`:
 
-    DEVICE=C:\AHCIASPI\AHCIASPI.SYS
-    DEVICE=C:\ASPI\ASPICD.SYS /D:ASPICD0
-    DEVICE=C:\ASPI\ASPIDISK.SYS
+    DEVICE=C:\OPENASPI\AHCIASPI.SYS
+    DEVICE=C:\OPENASPI\ASPICDA.SYS /D:ASPICDA0
+    DEVICE=C:\OPENASPI\ASPIFDD.SYS
 
 and `AUTOEXEC.BAT`:
 
-    MSCDEX /D:ASPICD0
+    C:\OPENASPI\SHSUCDX.COM /D:ASPICDA0
+
+(Adaptec's `ASPICD.SYS /D:ASPICD0` with `MSCDEX` works the same way.)
 
 ## Windows 3.x: 32-bit disk access (AHCIVXD.386)
 
@@ -51,7 +56,7 @@ and `AUTOEXEC.BAT`:
 - handles INT 13h of the DOS boxes for these disks, including the extended functions 41h-48h that MS-DOS 7.x uses for LBA/FAT32 partitions (Windows 3.1's Int13 device doesn't know them),
 - the BIOS VDS fix for Intel AHCI firmware (see below) for disks still driven by the BIOS.
 
-The installer option adds `device=*int13`, `device=C:\AHCIASPI\AHCIVXD.386` and `32BitDiskAccess=on` to `[386Enh]` of `SYSTEM.INI` (and removes `*wdctrl`). Settings in `[AHCIVXD]`: `DMA=0`, `PIO32=0`, `Int13=0`, `BiosFix=0`, `LogPort=233` (debug output to port E9h in QEMU).
+The installer option adds `device=*int13`, `device=C:\OPENASPI\AHCIVXD.386` and `32BitDiskAccess=on` to `[386Enh]` of `SYSTEM.INI` (and removes `*wdctrl`). Settings in `[AHCIVXD]`: `DMA=0`, `PIO32=0`, `Int13=0`, `BiosFix=0`, `LogPort=233` (debug output to port E9h in QEMU).
 
 How it works: the real mode part reads each BIOS disk's first sector through the BIOS and passes its CRC-32 in the BIOS intra-application area; in `Sys_Critical_Init` the VxD finds the disks on the controllers by it and registers them with BlockDev (as WDCTRL does, the geometry from the BIOS fixed disk tables); in `Device_Init` it asks the BIOS (nested V86 execution) for the geometry and size and hooks INT 13h. Each AHCI command saves and restores the BIOS's port state, so the BIOS (and AHCIASPI in DOS boxes) keep working on the same controller. Written from the documented BlockDev/Int13/VMM interfaces.
 
@@ -90,7 +95,7 @@ Linux (or any system with the tools), GNU make:
 - [NASM](https://nasm.us) for `AHCIASPI.SYS` and the tools,
 - [JWasm](https://github.com/Baron-von-Riedesel/JWasm) for DLMANIPF and AHCIVXD,
 - Open Watcom (`wcc386`) and a JWlink with working Windows 3.x VxD output (`LINK=path`, see [jwlink PR #17](https://github.com/Baron-von-Riedesel/jwlink/pull/17)) for AHCIVXD,
-- the [GeosOne DOS Installer](https://github.com/geosone/gdi) (`../gdi/build/INSTALL.EXE`, or `make package GDI=path`) for the package.
+- for the package: the [GeosOne DOS Installer](https://github.com/geosone/gdi) 1.14 (`../gdi/build/INSTALL.EXE`, or `make package GDI=path`), the OpenASPI drivers (`make` in [OpenAspi](https://github.com/geosone/OpenAspi): `../OpenAspi/build/dos`, or `OPENASPI=dir`) and SHSUCDX/CDAUDIO (`install/mkpkg.sh` in [shsucd](https://github.com/geosone/shsucd): `../shsucd/build/pkg`, or `SHSUCD=dir`).
 
 | Command | |
 |---|---|
@@ -101,6 +106,8 @@ Linux (or any system with the tools), GNU make:
 Build with `-DE9LOG` (nasm) to get every ASPI command on the QEMU debug console (`-debugcon file:e9.log`).
 
 ## Tests
+
+`test/install.sh` installs the package (`make package`) in QEMU with MS-DOS 7.1 (`BOOTIMG`, a boot floppy with XMGR, UDVD2 and MSCDEX): an IDE CD with MSCDEX before, an AHCI CD after setup; both get their letters from SHSUCDX, and `INSTALL /U` restores `CONFIG.SYS` and the MSCDEX line.
 
 `test/fastdisk.sh` (AHCIVXD in WfW 3.11, `DISK=ide|ahci`, runs `EXT13.COM` and copies files) and `test/biosfix.sh` (the BIOS VDS fix under EMM386) need the WfW image of EUSBASPI's `test/mkwin311.sh`.
 

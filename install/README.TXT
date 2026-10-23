@@ -1,9 +1,10 @@
-AHCIASPI 0.3 - ASPI manager for ATAPI drives on AHCI and IDE controllers
+AHCIASPI 0.4 - ASPI manager for ATAPI drives on AHCI and IDE controllers
 ==========================================================================
 
 AHCIASPI.SYS is an ASPI manager (device SCSIMGR$) for DOS.  It makes ATAPI
 drives - CD/DVD, ZIP, LS-120, tape and others - usable for DOS ASPI
-drivers such as ASPICD.SYS, ASPIDISK.SYS, MKELS120.SYS or GUEST.EXE.
+drivers: the OpenASPI drivers that come with it, or others such as
+Adaptec's ASPICD.SYS, ASPIDISK.SYS, MKELS120.SYS or GUEST.EXE.
 
 The drives can be connected to
   - an AHCI SATA controller, directly or through a SATA/IDE adapter,
@@ -26,31 +27,41 @@ files to C:\OPENASPI (shared with EUSBASPI and OpenASPI) and adds
 AHCIASPI.SYS to CONFIG.SYS.  INSTALL /U in C:\OPENASPI\AHCIASPI removes
 it again.
 
-CD-ROM drive (option, on by default): if INSTALL finds ASPICD.SYS and
-MSCDEX.EXE or SHSUCDX (in C:\DOS, the PATH, the Windows directory or the
-paths in CONFIG.SYS / AUTOEXEC.BAT), it adds
+The OpenASPI drivers (https://github.com/geosone/OpenAspi) come with it,
+each one an option; INSTALL loads the ones chosen after AHCIASPI.SYS:
 
-    DEVICE=...\ASPICD.SYS /D:ASPICD0
+  ASPICDA.SYS  CD/DVD drives (on by default), with SHSUCDX for the drive
+               letter and digital CD audio through VSBHDA (CDAUDIO.COM
+               switches it)
+  ASPIFDD.SYS  ZIP, LS-120, LS-240, Clik!, Jaz (on by default)
+  ASPIDSK.SYS  disks, card readers, USB sticks
+  ASPITAP.SYS  tape drives (TAPECTL.COM)
 
-to CONFIG.SYS and " /D:ASPICD0" to the MSCDEX/SHSUCDX line in
-AUTOEXEC.BAT (or a new line "MSCDEX /D:ASPICD0").  In the same way it
-adds ASPIDISK.SYS (ZIP, LS-120 etc. as DOS drives) and MKELS120.SYS
-(LS-120/LS-240 drives) after AHCIASPI.SYS.
+With AHCIASPI already loaded, ASPISCAN.COM finds the disks and tape
+drives, and their options are preselected.  OpenASPI and SHSUCD have
+installers of their own as well; they all share C:\OPENASPI.
 
-ASPI drivers on the installation disk: copy ASPICD.SYS, ASPIDISK.SYS,
-MKELS120.SYS (or MSCDEX.EXE, SHSUCDX.COM) next to INSTALL.EXE, and
-INSTALL installs these copies instead of searching the computer.
+CD-ROM: INSTALL puts SHSUCDX in the place of MSCDEX (MS-DOS) or NWCDEX
+(DR-DOS) in AUTOEXEC.BAT, with their drivers and drive letters, and adds
+" /D:ASPICDA0" to that line (or a new line
+"C:\OPENASPI\SHSUCDX.COM /D:ASPICDA0 /A:AUTO").  INSTALL /U puts MSCDEX
+or NWCDEX back.
+
+From 0.3: remove it first (INSTALL /U in C:\OPENASPI\AHCIASPI); 0.3 had
+loaded Adaptec's ASPICD, ASPIDISK and MKELS120, which use the same drives.
 
 By hand: copy AHCIASPI.SYS to the hard disk and add it to CONFIG.SYS
 before the ASPI drivers that use it, for example:
 
-    DEVICE=C:\AHCIASPI\AHCIASPI.SYS
-    DEVICE=C:\CDROM\ASPICD.SYS /D:ASPICD0
-    DEVICE=C:\ZIP\ASPIDISK.SYS
+    DEVICE=C:\OPENASPI\AHCIASPI.SYS
+    DEVICE=C:\OPENASPI\ASPICDA.SYS /D:ASPICDA0
+    DEVICE=C:\OPENASPI\ASPIFDD.SYS
 
 and in AUTOEXEC.BAT for the CD-ROM:
 
-    MSCDEX /D:ASPICD0 /L:R
+    C:\OPENASPI\SHSUCDX.COM /D:ASPICDA0 /L:R
+
+(Adaptec's ASPICD.SYS /D:ASPICD0 and MSCDEX work the same way.)
 
 
 Windows 3.x: 32-bit disk access (AHCIVXD.386)
@@ -70,7 +81,7 @@ The BIOS disks 80h-83h are found on the controllers by their first
 sector.  INSTALL adds to SYSTEM.INI, [386Enh]:
 
     device=*int13
-    device=C:\AHCIASPI\AHCIVXD.386
+    device=C:\OPENASPI\AHCIVXD.386
     32BitDiskAccess=on
 
 (and removes device=*wdctrl).  Options in SYSTEM.INI, [AHCIVXD]:
@@ -135,6 +146,7 @@ Files
   AHCIASPI.SYS   the driver
   AHCIVXD.386    32-bit disk access for Windows 3.1x enhanced mode
   ASPITEST.COM   test program: lists the ASPI host adapters and devices
+  ASPISCAN.COM   which devices the OpenASPI drivers would take (OpenASPI)
   README.TXT     this file
   LICENSE.TXT    GNU General Public License version 3
   INSTALL.EXE    GeosOne DOS Installer (https://github.com/geosone/gdi)
@@ -145,6 +157,14 @@ Optional (installed when selected):
   DLMANIPF.SYS   Drive Letter Manipulator, fixed version (see DLMANIPF.TXT)
   DLMANIPF.COM
   DLMANIPF.TXT
+  ASPICDA.SYS    OpenASPI: CD/DVD (GPL 3)
+  SHSUCDX.COM    CD-ROM redirector with digital CD audio (SHSUCD of Jason
+  CDAUDIO.COM    Hood, changed; https://github.com/geosone/shsucd)
+  SHSUCD.TXT     its readme, SHSUCD.LIC its license
+  ASPIFDD.SYS    OpenASPI: ZIP, LS-120 and other removable drives
+  ASPIDSK.SYS    OpenASPI: disks, card readers, USB sticks
+  ASPITAP.SYS    OpenASPI: tape drives
+  TAPECTL.COM    OpenASPI: tape control (rewind, eject, ...)
 
 
 Notes
