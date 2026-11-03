@@ -111,6 +111,11 @@ command:
 | PREVENT ALLOW MEDIUM REMOVAL | DOOR LOCK, DOOR UNLOCK |
 | INQUIRY, MODE SENSE, REQUEST SENSE | built from IDENTIFY DEVICE and the last error |
 
+MODE SENSE takes its WP bit from GET MEDIA STATUS. A drive without that
+command aborts it, and the bit stays clear. GET MEDIA STATUS also reports a
+media change, and the drive forgets the change once it has reported it, so
+MODE SENSE then fails with UNIT ATTENTION.
+
 The ATA error register gives the sense data:
 
 | ATA error | Sense |

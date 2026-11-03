@@ -10,7 +10,9 @@
 ;   START STOP UNIT (eject)            MEDIA EJECT
 ;   PREVENT ALLOW MEDIUM REMOVAL       DOOR LOCK / DOOR UNLOCK
 ;   INQUIRY                            from IDENTIFY DEVICE (vendor "ATA")
-;   MODE SENSE (10), REQUEST SENSE     built here
+;   MODE SENSE (10), REQUEST SENSE     built here; the WP bit from
+;                                      GET MEDIA STATUS where the drive
+;                                      has it
 ; Addressing is CHS with the geometry found at init: these drives have no
 ; LBA.  A failed command leaves its sense data per device, mapped from the
 ; ATA error register (NM, MC, WP, ...), for REQUEST SENSE and auto sense.
@@ -32,6 +34,7 @@ ATA_READ        equ     20h
 ATA_WRITE       equ     30h
 ATA_VERIFY      equ     40h
 ATA_INIT_PARAMS equ     91h
+ATA_MEDIA_STATUS equ    0DAh
 ATA_DOOR_LOCK   equ     0DEh
 ATA_DOOR_UNLOCK equ     0DFh
 ATA_IDENTIFY    equ     0ECh
@@ -261,6 +264,30 @@ ata_scsi:
         jmp     .done
 
 .msense:
+        ; WP from GET MEDIA STATUS.  A drive without it aborts: not
+        ; protected.  It also reports (and clears) a media change, which
+        ; must not get lost: UNIT ATTENTION, as a SCSI disk would.
+        mov     byte [ata_op], ATA_MEDIA_STATUS
+        xor     eax, eax
+        mov     cx, ATA_MEDIA_STATUS << 8
+        call    ata_nodata
+        xor     dl, dl
+        cmp     al, XR_OK
+        je      .ms_build
+        cmp     al, XR_CHECK
+        je      .ms_check
+        call    ata_result              ; timeout, transport error
+        jmp     .done
+.ms_check:
+        test    ah, ATAE_MC
+        jz      .ms_wp
+        mov     eax, SNS_CHANGED
+        call    ata_set_sense
+        jmp     .done
+.ms_wp: test    ah, ATAE_UNC            ; WP for this command
+        jz      .ms_build
+        mov     dl, 80h
+.ms_build:
         ; header, and a block descriptor unless DBD; no mode pages
         push    cs
         pop     es
@@ -290,6 +317,7 @@ ata_scsi:
         mov     dword [di+12], 00020000h
         mov     cx, 16
 .ms_give:
+        mov     [di+3], dl              ; device-specific: WP
         mov     ax, [cdb_buf+7]         ; allocation length
         xchg    al, ah
         cmp     cx, ax
