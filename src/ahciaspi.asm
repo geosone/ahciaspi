@@ -12,8 +12,10 @@
 ; CONFIG.SYS:
 ;   DEVICE=AHCIASPI.SYS [/C:n] [/ID:name] [/M:x] [/PIO] [/RAWINQ] [/T:s] [/Q] [/V]
 ;                       [/NOAHCI] [/NOIDE] [/NOPCI] [/P:port[,ctl]]
-;                       [/BIOSFIX] [/NOBIOSFIX]
+;                       [/BIOSFIX] [/NOBIOSFIX] [/NOATA]
 ;
+; /NOATA: do not offer ATA cartridge drives (SyQuest EZ135, ...) on classic
+; IDE channels; see ata.inc
 ; /BIOSFIX: work around the VDS bugs of Intel AHCI firmware under EMM386
 ; (biosfix.inc; on by default with an Intel AHCI controller)
 ;
@@ -104,6 +106,7 @@ MAX_IDE_CH      equ     10
 DF_DMA          equ     01h
 DF_DMADIR       equ     02h
 DF_CDB16        equ     04h
+DF_ATA          equ     08h             ; ATA removable disk (ata.inc)
 
 ; data mapping modes
 MAP_NONE        equ     0
@@ -1804,7 +1807,17 @@ srb_disk_info:
         xor     ax, ax
         mov     [es:si+SRB_DriveFlags], ax      ; not an INT 13h drive
         mov     [es:si+SRB_Heads], ax
-        mov     byte [es:si+SRB_Status], SS_COMP
+        mov     al, [dev_bios+bx]
+        or      al, al
+        jz      .done
+        ; an ATA cartridge drive the BIOS has as a hard disk: DOS has it too
+        mov     byte [es:si+SRB_DriveFlags], 01h
+        mov     [es:si+SRB_Int13HDriveInfo], al
+        mov     al, [dev_heads+bx]
+        mov     [es:si+SRB_Heads], al
+        mov     al, [dev_spt+bx]
+        mov     [es:si+SRB_Sectors], al
+.done:  mov     byte [es:si+SRB_Status], SS_COMP
 .out:   ret
 
 ;--- SC_RESET_DEV ------------------------------------------------------------
@@ -1813,6 +1826,8 @@ srb_reset:
         jc      .out
         cmp     byte [dev_trans+bx], TR_IDE
         jne     .ahci
+        test    byte [dev_flags+bx], DF_ATA     ; DEVICE RESET is ATAPI only
+        jnz     .result
         call    ide_setdev
         call    ide_irq_off
         call    ide_devreset
@@ -1953,6 +1968,11 @@ srb_exec:
         inc     al
 .ide_rd:
         mov     [x_write], al
+        test    byte [dev_flags+bx], DF_ATA
+        jz      .ide_packet
+        call    ata_scsi
+        jmp     .xdone
+.ide_packet:
         call    ide_packet
 .xdone: mov     byte [s_map], MAP_NONE
         jmp     .done_exec
@@ -2502,6 +2522,11 @@ auto_sense:
         movzx   cx, byte [es:si+SRB_SenseLen]
         test    cx, cx
         jz      .out
+        mov     bx, [s_dev]
+        test    byte [dev_flags+bx], DF_ATA
+        jz      .packet
+        jmp     ata_auto_sense
+.packet:
         mov     ax, [x_tfd]             ; keep the error register
         push    ax
         xor     eax, eax
@@ -2550,6 +2575,7 @@ auto_sense:
         mov     byte [es:di+7], 0Ah
 .out:   ret
 
+%include "ata.inc"
 
 ;-----------------------------------------------------------------------------
 ; Stack and DMA area
@@ -2577,6 +2603,7 @@ opt_noahci      db      0               ; /NOAHCI
 opt_biosfix     db      0               ; 1 = /BIOSFIX, 2 = /NOBIOSFIX
 intel_ahci      db      0               ; an Intel AHCI controller was found
 opt_noide       db      0               ; /NOIDE
+opt_noata       db      0               ; /NOATA: no ATA cartridge drives
 opt_nopci       db      0               ; /NOPCI
 ide_count       db      2               ; IDE channels to scan
 ide_bases       dw      1F0h, 170h
@@ -2916,8 +2943,14 @@ parse_cmdline:
 .opt_n4:
         mov     di, kw_nobiosfix
         call    match_kw
-        jc      .bad
+        jc      .opt_n5
         mov     byte [opt_biosfix], 2
+        jmp     .args
+.opt_n5:
+        mov     di, kw_noata
+        call    match_kw
+        jc      .bad
+        mov     byte [opt_noata], 1
         jmp     .args
 .opt_b: mov     di, kw_biosfix          ; /BIOSFIX
         call    match_kw
@@ -2996,6 +3029,7 @@ kw_noahci       db      'OAHCI', 0
 kw_noide        db      'OIDE', 0
 kw_nopci        db      'OPCI', 0
 kw_nobiosfix    db      'OBIOSFIX', 0
+kw_noata        db      'OATA', 0
 kw_biosfix      db      'IOSFIX', 0
 
 ; hexadecimal number at ES:SI -> AX.  CF if none.
@@ -3769,10 +3803,16 @@ probe_ide:
         mov     byte [dev_trans+bx], TR_IDE
         mov     byte [dev_flags+bx], 0
         call    identify_packet
+        jnc     .atapi
+        cmp     byte [opt_noata], 0
+        jne     .out
+        call    identify_ata
         jc      .out
-        and     byte [dev_flags+bx], ~(DF_DMA | DF_DMADIR)  ; PIO only
+        call    find_bios_drive
+        jmp     .found
+.atapi: and     byte [dev_flags+bx], ~(DF_DMA | DF_DMADIR)  ; PIO only
         call    inquiry_dev
-        inc     byte [dev_count]
+.found: inc     byte [dev_count]
         cmp     byte [opt_quiet], 0
         jne     .out
         call    print_dev
@@ -3895,6 +3935,211 @@ identify_packet:
 .fail:  stc
         ret
 
+; IDENTIFY DEVICE on IDE device BX: an ATA disk with the removable bit (a
+; cartridge drive such as the SyQuest EZ135) becomes a direct access device
+; of ata.inc.  Fixed disks are left to the BIOS.  CF if there is none.
+identify_ata:
+        call    ide_setdev
+        call    ide_irq_off
+        call    ata_identify
+        cmp     al, XR_OK
+        jne     .fail
+        mov     si, [bounce_ptr]
+        add     si, ATA_ID_OFS
+        mov     ax, [si]
+        test    ax, 8000h               ; not an ATA device
+        jnz     .fail
+        test    al, 80h                 ; removable media
+        jz      .fail
+        test    byte [si+53*2], 1       ; current geometry valid?
+        jz      .default
+        movzx   eax, word [si+55*2]
+        movzx   edx, word [si+56*2]
+        mov     ecx, [si+57*2]
+        call    .valid
+        jnc     .geometry
+.default:
+        movzx   eax, word [si+3*2]      ; heads
+        movzx   edx, word [si+6*2]      ; sectors per track
+        movzx   ecx, word [si+1*2]      ; cylinders
+        imul    ecx, eax
+        imul    ecx, edx
+        call    .valid
+        jc      .fail
+        ; the BIOS sets the same geometry; INITIALIZE DEVICE PARAMETERS
+        mov     [dev_heads+bx], al
+        mov     [dev_spt+bx], dl
+        call    ata_init_params
+        jc      .fail
+.geometry:
+        mov     [dev_heads+bx], al
+        mov     [dev_spt+bx], dl
+        mov     di, bx
+        shl     di, 2
+        mov     [dev_cap+di], ecx
+        mov     byte [dev_type+bx], 0
+        mov     byte [dev_flags+bx], DF_ATA
+        push    di                      ; model string, words 27..46
+        add     si, 27*2
+        mov     di, id_model
+        mov     cx, 20
+.model: mov     ax, [si]
+        xchg    al, ah
+        mov     [di], ax
+        add     si, 2
+        add     di, 2
+        loop    .model
+        mov     byte [di], 0
+        pop     di
+        call    ide_irq_on
+        clc
+        ret
+.fail:  call    ide_irq_on
+        stc
+        ret
+; EAX = heads, EDX = sectors per track, ECX = sectors: CF unless CHS works
+.valid: or      ecx, ecx
+        jz      .bad
+        cmp     eax, 1
+        jb      .bad
+        cmp     eax, 16
+        ja      .bad
+        cmp     edx, 1
+        jb      .bad
+        cmp     edx, 63
+        ja      .bad
+        clc
+        ret
+.bad:   stc
+        ret
+
+; INITIALIZE DEVICE PARAMETERS of IDE device BX to dev_heads / dev_spt.
+; CF on failure.
+ata_init_params:
+        pushad
+        call    ide_select
+        jc      .out
+        mov     dx, 2                   ; sector count: sectors per track
+        call    ide_port
+        mov     al, [dev_spt+bx]
+        out     dx, al
+        mov     dx, IDE_SELECT          ; head: last head number
+        call    ide_port
+        mov     al, [dev_heads+bx]
+        dec     al
+        or      al, [ide_sel]
+        out     dx, al
+        mov     dx, IDE_COMMAND
+        call    ide_port
+        mov     al, ATA_INIT_PARAMS
+        out     dx, al
+        call    ide_delay
+        call    ata_wait
+        jc      .out
+        test    al, TFD_ERR
+        jz      .out
+        stc
+.out:   popad
+        ret
+
+; Does the BIOS use ATA device BX as a hard disk?  EDD 1.1 names the port
+; and master / slave of each BIOS disk.  For a disk without that table, the
+; same CHS geometry counts as a match.  -> dev_bios = drive number or 0
+find_bios_drive:
+        pushad
+        push    es
+        mov     byte [dev_bios+bx], 0
+        mov     [fb_dev], bx
+        xor     ax, ax
+        mov     es, ax
+        mov     cl, [es:475h]           ; BIOS hard disks
+        mov     [fb_count], cl
+        mov     byte [fb_drive], 80h
+.drive: cmp     byte [fb_count], 0
+        je      .done
+        mov     ah, 41h
+        mov     bx, 55AAh
+        mov     dl, [fb_drive]
+        int     13h
+        jc      .geometry
+        cmp     bx, 0AA55h
+        jne     .geometry
+        test    cl, 04h                 ; EDD: device parameter table
+        jz      .geometry
+        mov     si, edd_buf
+        mov     word [si], 1Eh
+        mov     ah, 48h
+        mov     dl, [fb_drive]
+        int     13h
+        jc      .geometry
+        cmp     word [edd_buf], 1Eh
+        jb      .geometry
+        les     di, [edd_buf+1Ah]
+        mov     ax, es
+        and     ax, di
+        cmp     ax, 0FFFFh
+        je      .geometry
+        mov     bx, [fb_dev]
+        mov     si, bx
+        add     si, si
+        mov     ax, [es:di]             ; I/O base
+        cmp     ax, [dev_port+si]
+        jne     .next
+        mov     al, [es:di+4]           ; bit 4: slave
+        xor     al, [dev_sel+bx]
+        test    al, 10h
+        jnz     .next
+        jmp     .owned
+.geometry:
+        mov     ah, 08h
+        mov     dl, [fb_drive]
+        push    es
+        int     13h
+        pop     es
+        jc      .next
+        mov     bx, [fb_dev]
+        movzx   ax, dh                  ; last head
+        inc     ax
+        cmp     al, [dev_heads+bx]
+        jne     .next
+        mov     al, cl
+        and     al, 3Fh
+        cmp     al, [dev_spt+bx]
+        jne     .next
+        movzx   esi, cl                 ; cylinders
+        shl     si, 2
+        and     si, 300h
+        mov     al, ch
+        or      si, ax
+        and     si, 3FFh
+        inc     si
+        mov     di, bx
+        shl     di, 2
+        mov     eax, [dev_cap+di]
+        movzx   ecx, byte [dev_heads+bx]
+        movzx   edi, byte [dev_spt+bx]
+        imul    ecx, edi
+        xor     edx, edx
+        div     ecx                     ; the drive's cylinders
+        sub     eax, esi                ; the BIOS may hide up to two
+        cmp     eax, 2
+        ja      .next
+.owned: mov     bx, [fb_dev]
+        mov     al, [fb_drive]
+        mov     [dev_bios+bx], al
+        jmp     .done
+.next:  inc     byte [fb_drive]
+        dec     byte [fb_count]
+        jmp     .drive
+.done:  pop     es
+        popad
+        ret
+
+fb_dev          dw      0
+fb_drive        db      0
+fb_count        db      0
+edd_buf         times 1Eh db 0
+
 ; INQUIRY for device BX (retried for unit attention).  Updates the type.
 inquiry_dev:
         mov     cx, 4
@@ -3960,7 +4205,19 @@ print_dev:
         add     di, di
         mov     si, [type_names+di]
         call    print
-        mov     si, msg_dma
+        test    byte [dev_flags+bx], DF_ATA
+        jz      .atapi
+        mov     si, msg_ata
+        call    print
+        cmp     byte [dev_bios+bx], 0
+        je      .atapi
+        mov     si, msg_bios
+        call    print
+        mov     al, [dev_bios+bx]
+        call    print_hex8
+        mov     si, msg_h
+        call    print
+.atapi: mov     si, msg_dma
         test    byte [dev_flags+bx], DF_DMA
         jnz     .mode
         mov     si, msg_pio
@@ -4123,6 +4380,9 @@ msg_open        db      ' (', 0
 msg_dma         db      ', DMA)', 13, 10, 0
 msg_pio         db      ', PIO)', 13, 10, 0
 msg_ata_disk    db      ': ATA disk, ignored', 13, 10, 0
+msg_ata         db      ', ATA', 0
+msg_bios        db      ', BIOS ', 0
+msg_h           db      'h', 0
 msg_id_fail     db      ': IDENTIFY PACKET failed', 13, 10, 0
 msg_too_many    db      ': too many devices, ignored', 13, 10, 0
 msg_no_link     db      ': no device', 13, 10, 0

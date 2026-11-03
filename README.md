@@ -8,6 +8,8 @@ The drives can be connected to:
 - PCI IDE and RAID cards in native mode (SiI0680, Promise, HighPoint, ITE8212, ...),
 - any other IDE channel given with `/P:`.
 
+On classic and PCI IDE channels it also offers ATA cartridge drives: plain ATA (not ATAPI) disks with removable media, such as the SyQuest EZ135 and EZFlyer 230. See [ATA cartridge drives](#ata-cartridge-drives).
+
 It also works in the DOS boxes of Windows 3.x, and together with other ASPI managers (USBASPI, [EUSBASPI](https://github.com/geosone/eusbaspi), ASPI8DOS, ...): AHCIASPI chains to a manager loaded before it.
 
 **Status:** first version. Tested in QEMU (AHCI and IDE), 86Box (IDE, ZIP, CD audio) and VirtualBox; not yet on much real hardware. Reports with the output of `DEVICE=AHCIASPI.SYS /V` and `ASPITEST` are welcome.
@@ -19,7 +21,7 @@ Download the ZIP of the [latest release](https://github.com/geosone/ahciaspi/rel
 | Option | |
 |---|---|
 | CD/DVD drives (on) | `ASPICDA.SYS /D:ASPICDA0`; [SHSUCDX](https://github.com/geosone/shsucd) in the place of `MSCDEX` (MS-DOS) or `NWCDEX` (DR-DOS) in `AUTOEXEC.BAT`, with digital CD audio through [VSBHDA](https://github.com/geosone/VSBHDA) (`CDAUDIO.COM`) |
-| ZIP, LS-120, LS-240, Clik!, Jaz (on) | `ASPIFDD.SYS` |
+| ZIP, LS-120, LS-240, Clik!, Jaz, SyQuest (on) | `ASPIFDD.SYS` |
 | Disks, card readers, USB sticks | `ASPIDSK.SYS` |
 | Tape drives | `ASPITAP.SYS`, `TAPECTL.COM` |
 | Drive letter tools | `DLMANIPF.SYS`/`.COM` (see below) |
@@ -69,7 +71,7 @@ The INT 13h code of Intel AHCI option ROMs uses the Virtual DMA Services of memo
 ## Switches
 
     DEVICE=AHCIASPI.SYS [/C:n] [/ID:name] [/M:x] [/PIO] [/RAWINQ] [/T:s]
-                        [/Q] [/V] [/NOAHCI] [/NOIDE] [/NOPCI] [/P:port[,ctl]]
+                        [/Q] [/V] [/NOAHCI] [/NOIDE] [/NOPCI] [/NOATA] [/P:port[,ctl]]
 
 | Switch | |
 |---|---|
@@ -82,8 +84,54 @@ The INT 13h code of Intel AHCI option ROMs uses the Virtual DMA Services of memo
 | `/Q`, `/V` | quiet, verbose |
 | `/NOAHCI`, `/NOIDE` | no AHCI controllers, no IDE channels |
 | `/NOPCI` | only the standard IDE channels, no PCI IDE cards |
+| `/NOATA` | no ATA cartridge drives, ATAPI devices only |
 | `/P:port[,ctl]` | additional IDE channel (hex), control port default port+206h; may be repeated |
 | `/BIOSFIX`, `/NOBIOSFIX` | BIOS VDS fix on / off (default: on with an Intel AHCI controller) |
+
+## ATA cartridge drives
+
+An IDE device that rejects IDENTIFY PACKET DEVICE but answers IDENTIFY DEVICE
+with the removable bit (word 0 bit 7) becomes a SCSI direct access device. An
+ATA disk without that bit is a fixed disk and stays with the BIOS. INQUIRY
+gives vendor `ATA` and the IDE model as the product
+(`SyQuest EZFlyer 230`), so ASPIFDD takes the drive.
+
+SCSI commands are translated to ATA (`src/ata.inc`), in PIO, polled, and
+addressed by CHS, since these drives have no LBA:
+
+| SCSI | ATA |
+|---|---|
+| TEST UNIT READY, READ CAPACITY | VERIFY of sector 0 (no cartridge, cartridge changed) |
+| READ, WRITE, WRITE AND VERIFY, VERIFY | READ, WRITE, VERIFY SECTORS |
+| START STOP UNIT (eject) | MEDIA EJECT |
+| PREVENT ALLOW MEDIUM REMOVAL | DOOR LOCK, DOOR UNLOCK |
+| INQUIRY, MODE SENSE, REQUEST SENSE | built from IDENTIFY DEVICE and the last error |
+
+The ATA error register gives the sense data:
+
+| ATA error | Sense |
+|---|---|
+| NM | NOT READY, medium not present |
+| MC | UNIT ATTENTION, medium changed |
+| WP on a write | DATA PROTECT |
+| ABRT on an eject | medium removal prevented |
+
+The geometry is the one the BIOS set, or the default from IDENTIFY, which is
+then programmed into the drive. Nothing is retried, and a hung drive is not
+reset, because a channel reset would also hit the disk beside it.
+
+If the BIOS uses the drive as a hard disk (the CMOS type set), DOS has it as
+well. GET DISK INFO then reports it as an INT 13h drive with DOS, and the
+OpenASPI drivers leave it alone. The BIOS disk is found by:
+- the EDD 1.1 device parameter table, which names the port and master/slave;
+- without that table, the same CHS geometry.
+
+`/V` shows such a drive as `ATA, BIOS 80h`. On a channel the BIOS does not
+use, such as a tertiary ISA channel with `/P:1E8,3EE`, the drive belongs to
+AHCIASPI.
+
+Tested in 86Box: OpenASPI's `tests/dos_86box_syquest.sh` with ASPIFDD and
+with EXFAT.SYS. Needs the SyQuest drives of geosone/86Box `lpt-zip`.
 
 ## DLMANIPF
 

@@ -15,7 +15,7 @@ all: build/AHCIASPI.SYS build/ASPITEST.COM build/vxd/AHCIVXD.386
 build/vxd/AHCIVXD.386: vxd/AHCIVXD.C vxd/AHCIVXD.ASM vxd/AHCIRMI.ASM vxd/RTVXD.ASM vxd/VXD.INC
 	$(MAKE) -C vxd LINK=$(LINK)
 
-build/AHCIASPI.SYS: src/ahciaspi.asm src/ahci.inc src/aspi.inc src/biosfix.inc | build
+build/AHCIASPI.SYS: src/ahciaspi.asm src/ahci.inc src/aspi.inc src/biosfix.inc src/ata.inc | build
 	$(NASM) $(NFLAGS) -Isrc/ -l build/ahciaspi.lst -o $@ $<
 
 build/ASPITEST.COM: tools/aspitest.asm src/aspi.inc | build
