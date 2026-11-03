@@ -8,7 +8,7 @@ The drives can be connected to:
 - PCI IDE and RAID cards in native mode (SiI0680, Promise, HighPoint, ITE8212, ...),
 - any other IDE channel given with `/P:`.
 
-On classic and PCI IDE channels it also offers ATA cartridge drives: plain ATA (not ATAPI) disks with removable media, such as the SyQuest EZ135 and EZFlyer 230. See [ATA cartridge drives](#ata-cartridge-drives).
+It also offers ATA cartridge drives, on IDE channels and on AHCI ports (through an IDE to SATA adapter). These are plain ATA (not ATAPI) disks with removable media, such as the SyQuest EZ135 and EZFlyer 230. See [ATA cartridge drives](#ata-cartridge-drives).
 
 It also works in the DOS boxes of Windows 3.x, and together with other ASPI managers (USBASPI, [EUSBASPI](https://github.com/geosone/eusbaspi), ASPI8DOS, ...): AHCIASPI chains to a manager loaded before it.
 
@@ -90,14 +90,18 @@ The INT 13h code of Intel AHCI option ROMs uses the Virtual DMA Services of memo
 
 ## ATA cartridge drives
 
-An IDE device that rejects IDENTIFY PACKET DEVICE but answers IDENTIFY DEVICE
-with the removable bit (word 0 bit 7) becomes a SCSI direct access device. An
-ATA disk without that bit is a fixed disk and stays with the BIOS. INQUIRY
+A device that rejects IDENTIFY PACKET DEVICE but answers IDENTIFY DEVICE with
+the removable bit (word 0 bit 7) becomes a SCSI direct access device. So does
+CompactFlash (848Ah). The device can be on an IDE channel or an AHCI port; on
+an AHCI port it can be behind an IDE to SATA adapter. An ATA disk without that
+bit is a fixed disk and stays with the BIOS. INQUIRY
 gives vendor `ATA` and the IDE model as the product
 (`SyQuest EZFlyer 230`), so ASPIFDD takes the drive.
 
-SCSI commands are translated to ATA (`src/ata.inc`), in PIO, polled, and
-addressed by CHS, since these drives have no LBA:
+SCSI commands are translated to ATA (`src/ata.inc`), polled and addressed by
+CHS, since these drives have no LBA. IDE moves the data in PIO. AHCI uses
+one FIS per command, with the data in the bounce buffer, 4 sectors per
+command:
 
 | SCSI | ATA |
 |---|---|
@@ -117,21 +121,29 @@ The ATA error register gives the sense data:
 | ABRT on an eject | medium removal prevented |
 
 The geometry is the one the BIOS set, or the default from IDENTIFY, which is
-then programmed into the drive. Nothing is retried, and a hung drive is not
-reset, because a channel reset would also hit the disk beside it.
+then programmed into the drive. Nothing is retried. A hung IDE drive is not reset, because a channel reset
+would also hit the disk beside it. On AHCI, a timeout resets that one port,
+as it does for ATAPI devices.
 
 If the BIOS uses the drive as a hard disk (the CMOS type set), DOS has it as
 well. GET DISK INFO then reports it as an INT 13h drive with DOS, and the
 OpenASPI drivers leave it alone. The BIOS disk is found by:
-- the EDD 1.1 device parameter table, which names the port and master/slave;
-- without that table, the same CHS geometry.
+- the EDD 3.0 device path of a SATA disk (controller and port);
+- the EDD 1.1 device parameter table of an IDE disk (port, master/slave);
+- with EDD but neither, the same size;
+- without EDD, the same CHS geometry.
 
 `/V` shows such a drive as `ATA, BIOS 80h`. On a channel the BIOS does not
 use, such as a tertiary ISA channel with `/P:1E8,3EE`, the drive belongs to
 AHCIASPI.
 
-Tested in 86Box: OpenASPI's `tests/dos_86box_syquest.sh` with ASPIFDD and
-with EXFAT.SYS. Needs the SyQuest drives of geosone/86Box `lpt-zip`.
+Tested:
+- in 86Box with OpenASPI's `tests/dos_86box_syquest.sh`, through ASPIFDD
+  and EXFAT.SYS. This needs the SyQuest drives of geosone/86Box `lpt-zip`.
+- in QEMU with `tests/dos_ahci_ata.sh`, on an AHCI port. The drive is
+  `ide-cf` with the EZFlyer's model and geometry.
+  - With SeaBIOS, the drive is BIOS disk 80h.
+  - With a SeaBIOS built without AHCI, it is AHCIASPI's.
 
 ## DLMANIPF
 

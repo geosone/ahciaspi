@@ -278,6 +278,9 @@ x_tfd           dd      0               ; PxTFD after the command
 x_res           db      0
 x_xfer          dd      0               ; bytes actually transferred
 x_over          db      0               ; device wanted to move more data
+x_ata           db      0               ; ATA command: x_tf / x_cnt in the FIS
+x_tf            dd      0               ; FIS bytes 4..7: sector, cylinder, device
+x_cnt           db      0               ; FIS sector count
 cdb_buf         times 16 db 0
 
 ; SCSI request state
@@ -997,6 +1000,13 @@ ahci_exec:
         mov     [di+8], eax
         mov     [di+12], eax
         mov     [di+16], eax
+        cmp     byte [x_ata], 0         ; ATA: CHS task file (ata.inc)
+        je      .fis_done
+        mov     eax, [x_tf]
+        mov     [di+4], eax
+        mov     al, [x_cnt]
+        mov     [di+12], al
+.fis_done:
 
         ; ATAPI command packet
         mov     si, cdb_buf
@@ -1824,10 +1834,10 @@ srb_disk_info:
 srb_reset:
         call    find_dev
         jc      .out
-        cmp     byte [dev_trans+bx], TR_IDE
-        jne     .ahci
         test    byte [dev_flags+bx], DF_ATA     ; DEVICE RESET is ATAPI only
         jnz     .result
+        cmp     byte [dev_trans+bx], TR_IDE
+        jne     .ahci
         call    ide_setdev
         call    ide_irq_off
         call    ide_devreset
@@ -1934,6 +1944,8 @@ srb_exec:
 
         call    translate_cdb
         jc      .invalid
+        test    byte [dev_flags+bx], DF_ATA     ; ATA: ata.inc, CPU copies
+        jnz     .ide
         cmp     byte [dev_trans+bx], TR_IDE
         je      .ide
         call    map_data
@@ -3571,6 +3583,28 @@ probe_port:
         je      .atapi
         cmp     eax, SIG_ATA
         jne     .try                    ; no or odd signature: ask the device
+        cmp     byte [opt_noata], 0
+        jne     .ata_disk
+        movzx   bx, byte [dev_count]    ; an ATA cartridge drive?
+        cmp     bx, MAX_DEV
+        jae     .full
+        mov     di, bx
+        add     di, di
+        mov     [dev_port+di], bp
+        mov     al, [port_num]
+        mov     [dev_pnum+bx], al
+        mov     byte [dev_trans+bx], TR_AHCI
+        mov     byte [dev_flags+bx], 0
+        call    identify_ata
+        jc      .ata_disk
+.ata_found:
+        call    find_bios_drive
+        inc     byte [dev_count]
+        cmp     byte [opt_quiet], 0
+        jne     .out
+        call    print_dev
+        jmp     .out
+.ata_disk:
         cmp     byte [opt_verbose], 0
         je      .out
         mov     si, msg_ata_disk
@@ -3589,13 +3623,20 @@ probe_port:
         mov     byte [dev_flags+bx], 0
 
         call    identify_packet
-        jc      .noid
+        jc      .try_ata                ; the signature is not always set
         call    inquiry_dev
         inc     byte [dev_count]
         cmp     byte [opt_quiet], 0
         jne     .out
         call    print_dev
         jmp     .out
+.try_ata:
+        cmp     byte [opt_noata], 0
+        jne     .noid
+        mov     byte [dev_trans+bx], TR_AHCI
+        call    identify_ata
+        jc      .noid
+        jmp     .ata_found
 .noid:  cmp     byte [opt_verbose], 0
         je      .out
         mov     si, msg_id_fail
@@ -3940,17 +3981,20 @@ identify_packet:
 ; of ata.inc.  Fixed disks are left to the BIOS.  CF if there is none.
 identify_ata:
         call    ide_setdev
-        call    ide_irq_off
+        call    ata_irq_off
         call    ata_identify
         cmp     al, XR_OK
         jne     .fail
         mov     si, [bounce_ptr]
         add     si, ATA_ID_OFS
         mov     ax, [si]
+        cmp     ax, 848Ah               ; CompactFlash: removable too
+        je      .removable
         test    ax, 8000h               ; not an ATA device
         jnz     .fail
         test    al, 80h                 ; removable media
         jz      .fail
+.removable:
         test    byte [si+53*2], 1       ; current geometry valid?
         jz      .default
         movzx   eax, word [si+55*2]
@@ -3991,10 +4035,10 @@ identify_ata:
         loop    .model
         mov     byte [di], 0
         pop     di
-        call    ide_irq_on
+        call    ata_irq_on
         clc
         ret
-.fail:  call    ide_irq_on
+.fail:  call    ata_irq_on
         stc
         ret
 ; EAX = heads, EDX = sectors per track, ECX = sectors: CF unless CHS works
@@ -4017,34 +4061,26 @@ identify_ata:
 ; CF on failure.
 ata_init_params:
         pushad
-        call    ide_select
-        jc      .out
-        mov     dx, 2                   ; sector count: sectors per track
-        call    ide_port
-        mov     al, [dev_spt+bx]
-        out     dx, al
-        mov     dx, IDE_SELECT          ; head: last head number
-        call    ide_port
-        mov     al, [dev_heads+bx]
-        dec     al
-        or      al, [ide_sel]
-        out     dx, al
-        mov     dx, IDE_COMMAND
-        call    ide_port
-        mov     al, ATA_INIT_PARAMS
-        out     dx, al
-        call    ide_delay
-        call    ata_wait
-        jc      .out
-        test    al, TFD_ERR
-        jz      .out
+        movzx   eax, byte [dev_heads+bx]  ; the last head, sector 1
+        dec     eax
+        movzx   ecx, byte [dev_spt+bx]
+        imul    eax, ecx
+        mov     ch, ATA_INIT_PARAMS     ; sector count: sectors per track
+        call    ata_nodata
+        cmp     al, XR_OK
+        je      .out                    ; CF clear
         stc
 .out:   popad
         ret
 
-; Does the BIOS use ATA device BX as a hard disk?  EDD 1.1 names the port
-; and master / slave of each BIOS disk.  For a disk without that table, the
-; same CHS geometry counts as a match.  -> dev_bios = drive number or 0
+; Does the BIOS use ATA device BX as a hard disk?  For each BIOS disk:
+;  - EDD 3.0 names a SATA disk by controller (PCI bus, device, function)
+;    and port;
+;  - EDD 1.1's device parameter table names an IDE disk by port and
+;    master / slave;
+;  - a BIOS disk with EDD but neither counts when it has the same size;
+;  - a BIOS without EDD: the same CHS geometry.
+; -> dev_bios = drive number or 0
 find_bios_drive:
         pushad
         push    es
@@ -4056,30 +4092,68 @@ find_bios_drive:
         mov     [fb_count], cl
         mov     byte [fb_drive], 80h
 .drive: cmp     byte [fb_count], 0
-        je      .done
-        mov     ah, 41h
+        jne     .ask
+        jmp     .done
+.ask:   mov     ah, 41h
         mov     bx, 55AAh
         mov     dl, [fb_drive]
         int     13h
         jc      .geometry
         cmp     bx, 0AA55h
         jne     .geometry
-        test    cl, 04h                 ; EDD: device parameter table
+        test    cl, 01h                 ; extended functions (with 48h)
         jz      .geometry
+        mov     [fb_edd], cl
+        push    ds
+        pop     es
+        mov     di, edd_buf
+        mov     cx, EDD_BUF_LEN
+        xor     al, al
+        rep     stosb
+        mov     word [edd_buf], EDD_BUF_LEN
         mov     si, edd_buf
-        mov     word [si], 1Eh
         mov     ah, 48h
         mov     dl, [fb_drive]
         int     13h
         jc      .geometry
+        mov     bx, [fb_dev]
+        cmp     word [edd_buf], EDD_BUF_LEN     ; EDD 3.0 device path
+        jb      .dpte
+        cmp     word [edd_buf+1Eh], 0BEDDh
+        jne     .dpte
+        cmp     word [edd_buf+24h], 'PC'
+        jne     .dpte
+        cmp     byte [edd_buf+26h], 'I'
+        jne     .dpte
+        cmp     dword [edd_buf+28h], 'SATA'
+        jne     .dpte
+        cmp     byte [dev_trans+bx], TR_AHCI    ; a SATA disk: this port?
+        jne     .next
+        mov     ax, [pci_bdf]           ; the AHCI controller
+        cmp     [edd_buf+30h], ah       ; bus
+        jne     .next
+        mov     dl, al
+        shr     dl, 3
+        cmp     [edd_buf+31h], dl       ; device
+        jne     .next
+        and     al, 7
+        cmp     [edd_buf+32h], al       ; function
+        jne     .next
+        mov     al, [dev_pnum+bx]
+        cmp     [edd_buf+38h], al       ; port
+        jne     .next
+        jmp     .owned
+.dpte:  cmp     byte [dev_trans+bx], TR_IDE
+        jne     .capacity
+        test    byte [fb_edd], 04h      ; EDD: device parameter table
+        jz      .capacity
         cmp     word [edd_buf], 1Eh
-        jb      .geometry
+        jb      .capacity
         les     di, [edd_buf+1Ah]
         mov     ax, es
         and     ax, di
         cmp     ax, 0FFFFh
-        je      .geometry
-        mov     bx, [fb_dev]
+        je      .capacity
         mov     si, bx
         add     si, si
         mov     ax, [es:di]             ; I/O base
@@ -4089,6 +4163,17 @@ find_bios_drive:
         xor     al, [dev_sel+bx]
         test    al, 10h
         jnz     .next
+        jmp     .owned
+.capacity:
+        cmp     word [edd_buf], 18h     ; sectors given?
+        jb      .next
+        cmp     dword [edd_buf+14h], 0
+        jne     .next
+        mov     si, bx
+        shl     si, 2
+        mov     eax, [dev_cap+si]
+        cmp     [edd_buf+10h], eax
+        jne     .next
         jmp     .owned
 .geometry:
         mov     ah, 08h
@@ -4135,10 +4220,12 @@ find_bios_drive:
         popad
         ret
 
+EDD_BUF_LEN     equ     42h
+fb_edd          db      0
 fb_dev          dw      0
 fb_drive        db      0
 fb_count        db      0
-edd_buf         times 1Eh db 0
+edd_buf         times EDD_BUF_LEN db 0
 
 ; INQUIRY for device BX (retried for unit attention).  Updates the type.
 inquiry_dev:

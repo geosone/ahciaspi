@@ -1,5 +1,5 @@
 ;=============================================================================
-; ATA (non-packet) removable disks on classic IDE channels
+; ATA (non-packet) removable disks on IDE channels and AHCI ports
 ;
 ; Cartridge drives such as the SyQuest EZ135 and EZFlyer are plain ATA disks
 ; with the removable bit in IDENTIFY DEVICE word 0, not ATAPI devices.  They
@@ -14,8 +14,11 @@
 ; Addressing is CHS with the geometry found at init: these drives have no
 ; LBA.  A failed command leaves its sense data per device, mapped from the
 ; ATA error register (NM, MC, WP, ...), for REQUEST SENSE and auto sense.
-; Nothing is retried or replayed, and a hung drive is not reset: a channel
-; reset would also hit the BIOS disk next to it.
+; Nothing is retried or replayed, and a hung IDE drive is not reset: a
+; channel reset would also hit the BIOS disk next to it.  On an AHCI port
+; (a SATA drive, or an IDE drive behind a SATA bridge) a command is one
+; ahci_exec with the CHS task file in the FIS; data goes through the bounce
+; buffer, ATA_AHCI_CHUNK sectors per command, copied by the CPU.
 ;=============================================================================
 
 ; byte order of EAX reversed (BSWAP is a 486 instruction)
@@ -42,7 +45,8 @@ ATAE_IDNF       equ     10h
 ATAE_MC         equ     20h             ; media changed
 ATAE_UNC        equ     40h             ; uncorrectable / write protected
 
-ATA_CHUNK       equ     128             ; sectors per ATA command
+ATA_CHUNK       equ     128             ; sectors per ATA command (IDE)
+ATA_AHCI_CHUNK  equ     BOUNCE_SIZE / 512 ; sectors per ATA command (AHCI)
 ATA_ID_OFS      equ     1024            ; IDENTIFY data in the bounce buffer
 ATA_BUILD_OFS   equ     512             ; answers built in the bounce buffer
 
@@ -92,7 +96,7 @@ ata_scsi:
         mov     di, ax
         mov     es, [x_bufp+2]
         call    advance_bufp
-        call    ide_irq_off
+        call    ata_irq_off
         mov     al, [cdb_buf]
         cmp     al, SCSI_REQUEST_SENSE
         je      .rsense
@@ -298,11 +302,24 @@ ata_scsi:
 .badfield:
         mov     eax, SNS_BAD_FIELD
         call    ata_set_sense
-.done:  call    ide_irq_on
+.done:  call    ata_irq_on
         pop     es
         popad
         mov     al, [ata_res]
         ret
+
+; IDE interrupts of device BX off / on; nothing to do on an AHCI port
+ata_irq_off:
+        cmp     byte [dev_trans+bx], TR_IDE
+        jne     .out
+        call    ide_irq_off
+.out:   ret
+
+ata_irq_on:
+        cmp     byte [dev_trans+bx], TR_IDE
+        jne     .out
+        call    ide_irq_on
+.out:   ret
 
 ; EAX = sense -> ata_sense of device BX, request result XR_CHECK
 ata_set_sense:
@@ -434,18 +451,7 @@ ata_issue:
         pop     ecx
         pop     eax
         jc      .out
-        push    ecx
-        movzx   esi, byte [dev_spt+bx]
-        xor     edx, edx
-        div     esi
-        inc     dl
-        mov     [ata_sec], dl
-        movzx   esi, byte [dev_heads+bx]
-        xor     edx, edx
-        div     esi
-        mov     [ata_head], dl
-        mov     [ata_cyl], ax
-        pop     ecx
+        call    ata_chs
         mov     dx, 2                   ; sector count
         call    ide_port
         mov     al, cl
@@ -469,6 +475,22 @@ ata_issue:
         call    ide_delay
         clc
 .out:   popad
+        ret
+
+; LBA EAX of device BX -> ata_sec, ata_head, ata_cyl (registers kept)
+ata_chs:
+        pushad
+        movzx   esi, byte [dev_spt+bx]
+        xor     edx, edx
+        div     esi
+        inc     dl
+        mov     [ata_sec], dl
+        movzx   esi, byte [dev_heads+bx]
+        xor     edx, edx
+        div     esi
+        mov     [ata_head], dl
+        mov     [ata_cyl], ax
+        popad
         ret
 
 ; Wait until device BX is not busy -> AL = status, AH = error register (0
@@ -495,7 +517,12 @@ ata_wait:
 
 ; Command CH without data, sector count CL, LBA EAX -> AL = XR_*, AH = error
 ata_nodata:
-        call    ata_issue
+        cmp     byte [dev_trans+bx], TR_IDE
+        je      .ide
+        mov     dword [ata_bytes], 0
+        xor     dl, dl
+        jmp     ata_ahci
+.ide:   call    ata_issue
         jc      .timeout
         call    ata_wait
         jc      .timeout
@@ -512,6 +539,9 @@ ata_nodata:
 ; [ata_op] (read, write, verify) of [ata_left] sectors at [ata_lba]
 ; -> AL = XR_*, AH = error register
 ata_rw:
+        cmp     byte [dev_trans+bx], TR_IDE
+        je      .next
+        jmp     ata_rw_ahci
 .next:  mov     ecx, [ata_left]
         or      ecx, ecx
         jz      .good
@@ -572,7 +602,23 @@ ata_rw:
 ; IDENTIFY DEVICE of device BX (ide_setdev done, interrupts off) to
 ; bounce+ATA_ID_OFS -> AL = XR_*, AH = error register
 ata_identify:
-        call    ide_select
+        cmp     byte [dev_trans+bx], TR_IDE
+        je      .ide
+        push    ecx
+        push    edx
+        mov     byte [x_cmd], ATA_IDENTIFY
+        mov     dword [x_tf], 0A0000000h
+        mov     byte [x_cnt], 0
+        mov     eax, [phys_bounce]
+        add     eax, ATA_ID_OFS
+        mov     [ata_phys], eax
+        mov     ecx, 512
+        xor     dl, dl
+        call    ata_ahci_exec
+        pop     edx
+        pop     ecx
+        ret
+.ide:   call    ide_select
         jc      .timeout
         mov     dx, IDE_COMMAND
         call    ide_port
@@ -604,6 +650,160 @@ ata_identify:
         ret
 .protocol:
         mov     al, XR_HBA
+        ret
+
+;-----------------------------------------------------------------------------
+; AHCI transport
+;-----------------------------------------------------------------------------
+
+ata_phys        dd      0               ; physical address of the data
+ata_bytes       dd      0               ; data bytes of the command
+
+; ATA command CH, sector count CL, LBA EAX (as CHS) on AHCI device BX, with
+; [ata_bytes] of data in the bounce buffer, DL = 1 for a write -> AL = XR_*,
+; AH = error register
+ata_ahci:
+        mov     [x_cmd], ch
+        mov     [x_cnt], cl
+        call    ata_chs
+        push    eax
+        mov     al, [ata_sec]           ; FIS: sector, cylinder low, high,
+        mov     ah, [ata_cyl]           ; device / head
+        mov     [x_tf], ax
+        mov     al, [ata_cyl+1]
+        mov     ah, [ata_head]
+        or      ah, 0A0h
+        mov     [x_tf+2], ax
+        mov     eax, [phys_bounce]
+        mov     [ata_phys], eax
+        pop     eax
+        push    ecx
+        mov     ecx, [ata_bytes]
+        call    ata_ahci_exec
+        pop     ecx
+        ret
+
+; x_cmd / x_tf / x_cnt on AHCI device BX, ECX bytes of data at [ata_phys],
+; DL = 1 for a write.  ahci_exec's x_xfer / x_over (of the PRD) are not the
+; request's and are kept.  -> AL = XR_*, AH = error register
+ata_ahci_exec:
+        push    bp
+        push    si
+        push    dword [x_xfer]
+        mov     al, [x_over]
+        push    ax
+        mov     si, bx
+        add     si, si
+        mov     bp, [dev_port+si]
+        mov     [x_write], dl
+        call    prd_clear
+        jecxz   .nodata
+        mov     eax, [ata_phys]
+        call    prd_add
+.nodata:
+        mov     byte [x_atapi], 0
+        mov     byte [x_feat], 0
+        mov     word [x_bcl], 0
+        mov     byte [x_ata], 1
+        call    ahci_exec
+        mov     byte [x_ata], 0
+        mov     ah, [x_tfd+1]
+        pop     si                      ; the request's x_over
+        push    ax
+        mov     ax, si
+        mov     [x_over], al
+        pop     ax
+        pop     dword [x_xfer]
+        pop     si
+        pop     bp
+        ret
+
+; [ata_op] of [ata_left] sectors at [ata_lba] on AHCI device BX, through the
+; bounce buffer -> AL = XR_*, AH = error register
+ata_rw_ahci:
+.next:  mov     ecx, [ata_left]
+        or      ecx, ecx
+        jz      .good
+        cmp     ecx, ATA_AHCI_CHUNK
+        jbe     .count
+        mov     ecx, ATA_AHCI_CHUNK
+.count: mov     [ata_n], cx
+        xor     dl, dl
+        mov     dword [ata_bytes], 0
+        cmp     byte [ata_op], ATA_VERIFY
+        je      .go
+        shl     ecx, 9
+        mov     [ata_bytes], ecx
+        cmp     byte [ata_op], ATA_WRITE
+        jne     .go
+        mov     dl, 1
+        call    ata_mem_out
+.go:    mov     cx, [ata_n]
+        mov     ch, [ata_op]
+        mov     eax, [ata_lba]
+        call    ata_ahci
+        cmp     al, XR_OK
+        jne     .out
+        cmp     byte [ata_op], ATA_READ
+        jne     .advance
+        mov     ecx, [ata_bytes]
+        call    ata_mem_in
+.advance:
+        movzx   eax, word [ata_n]
+        add     [ata_lba], eax
+        sub     [ata_left], eax
+        jmp     .next
+.good:  mov     ax, XR_OK
+.out:   ret
+
+; ECX bytes read into the bounce buffer -> request buffer (at most [x_rem];
+; the rest is dropped and reported as overrun)
+ata_mem_in:
+        pushad
+        push    es
+        cmp     ecx, [x_rem]
+        jbe     .take
+        mov     ecx, [x_rem]
+        mov     byte [x_over], 1
+.take:  sub     [x_rem], ecx
+        add     [x_xfer], ecx
+        les     di, [x_bufp]
+        mov     si, [bounce_ptr]
+        rep     movsb
+        call    advance_bufp
+        pop     es
+        popad
+        ret
+
+; request buffer -> ECX bytes to write in the bounce buffer (at most [x_rem];
+; zeros for the rest, reported as overrun)
+ata_mem_out:
+        pushad
+        push    es
+        mov     edx, ecx
+        cmp     ecx, [x_rem]
+        jbe     .take
+        mov     ecx, [x_rem]
+        mov     byte [x_over], 1
+.take:  sub     [x_rem], ecx
+        add     [x_xfer], ecx
+        sub     edx, ecx                ; bytes to pad
+        push    cs
+        pop     es
+        mov     di, [bounce_ptr]
+        push    ds
+        lds     si, [x_bufp]
+        rep     movsb
+        pop     ds
+        push    di
+        mov     di, si                  ; advance_bufp takes the offset in DI
+        call    advance_bufp
+        pop     di
+        mov     ecx, edx
+        xor     al, al
+        rep     stosb
+        pop     es
+        popad
         ret
 
 ; Auto sense of the failed request of ATA device BX into the SRB at ES:SI
