@@ -111,6 +111,7 @@ command:
 | PREVENT ALLOW MEDIUM REMOVAL | DOOR LOCK, DOOR UNLOCK |
 | INQUIRY, MODE SENSE, REQUEST SENSE | built from IDENTIFY DEVICE and the last error |
 | REASSIGN BLOCKS | SyQuest REASSIGN SECTOR (F8h) in super-user mode |
+| SET PROTECTION MODE (Iomega 0Ch), no password | SyQuest WRITE PROTECT (C0h): mode 2 `P`, mode 0 `E` |
 
 REASSIGN BLOCKS follows the SyQuest *SparQ Internal EIDE Technical
 Reference* (1997, page 6-45). It takes the short list with 4-byte LBAs and
@@ -144,6 +145,14 @@ The ATA error register gives the sense data:
 | MC | UNIT ATTENTION, medium changed |
 | WP on a write | DATA PROTECT |
 | ABRT on an eject | medium removal prevented |
+| ABRT on DOOR LOCK or WRITE PROTECT | invalid opcode |
+
+WRITE PROTECT (C0h, SparQ reference page 6-72) sets the write protection
+stored on the cartridge. AHCIASPI offers it as Iomega's SET PROTECTION MODE,
+so one tool (`ASPICTL PROTECT`) serves ZIP and SyQuest drives. Password modes
+are refused. According to SyQuest's utility notes the EZ135 honours only its
+write protect tab. 86Box's EZ135 aborts C0h; what a real one answers is not
+known, so check with a write after `ASPICTL PROTECT` on that drive.
 
 The geometry is the one the BIOS set, or the default from IDENTIFY, which is
 then programmed into the drive. Nothing is retried. A hung IDE drive is not reset, because a channel reset

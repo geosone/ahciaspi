@@ -12,6 +12,8 @@
 ;   INQUIRY                            from IDENTIFY DEVICE (vendor "ATA")
 ;   REASSIGN BLOCKS                    SyQuest REASSIGN SECTOR (F8h) in
 ;                                      super-user mode (FBh / FCh)
+;   SET PROTECTION MODE (Iomega 0Ch)   SyQuest WRITE PROTECT (C0h), no
+;                                      password: mode 0 'E', mode 2 'P'
 ;   MODE SENSE (10), REQUEST SENSE     built here; the WP bit from
 ;                                      GET MEDIA STATUS where the drive
 ;                                      has it
@@ -47,6 +49,8 @@ ATA_EJECT       equ     0EDh
 ATA_SQ_REASSIGN equ     0F8h            ; reassign the sector at the address
 ATA_SQ_SUPER    equ     0FBh            ; enter (cyl FFFFh) / confirm (F00Fh)
 ATA_SQ_LEAVE    equ     0FCh            ; leave super-user mode
+ATA_SQ_PROTECT  equ     0C0h            ; Features 'P' protect, 'E' release
+                                        ; (p. 6-72; CFA ERASE elsewhere)
 
 ; ATA error register
 ATAE_NM         equ     02h             ; no media
@@ -93,6 +97,7 @@ ata_cyl         dw      0
 ata_head        db      0
 ata_sec         db      0
 ata_raw         db      0               ; ata_chs keeps the registers set
+ata_feat        db      0               ; Features register of the command
 ata_defects     dw      0               ; REASSIGN BLOCKS: LBAs left
 
 ; Run the SCSI command in cdb_buf on ATA device BX.  Data goes to / comes
@@ -138,6 +143,8 @@ ata_scsi:
         je      .startstop
         cmp     al, 1Eh                 ; PREVENT ALLOW MEDIUM REMOVAL
         je      .prevent
+        cmp     al, 0Ch                 ; Iomega SET PROTECTION MODE
+        je      .protect
         cmp     al, 07h                 ; REASSIGN BLOCKS
         jne     .not_reassign
         call    ata_reassign
@@ -342,6 +349,29 @@ ata_scsi:
         mov     cx, ax
 .ms_len:
         call    ata_give
+        jmp     .done
+
+; The cartridge's software write protection, without a password: the
+; Iomega command, so that one tool serves ZIP and SyQuest drives
+.protect:
+        cmp     byte [cdb_buf+4], 0     ; password length
+        jne     .badfield
+        mov     al, [cdb_buf+1]
+        and     al, 0Fh
+        mov     cl, 'E'
+        cmp     al, 0                   ; not protected
+        je      .protect_cmd
+        mov     cl, 'P'
+        cmp     al, 2                   ; write protected
+        jne     .badfield
+.protect_cmd:
+        mov     [ata_feat], cl
+        mov     byte [ata_op], ATA_SQ_PROTECT
+        xor     eax, eax
+        mov     cx, ATA_SQ_PROTECT << 8
+        call    ata_nodata
+        mov     byte [ata_feat], 0
+        call    ata_result
         jmp     .done
 
 .badfield:
@@ -567,13 +597,15 @@ ata_result:
         je      .check
         mov     [ata_res], al
         ret
-.check: mov     eax, SNS_NO_MEDIUM
-        test    ah, ATAE_NM
+.check: push    edx
+        mov     dl, ah                  ; EAX gets the sense: keep the error
+        mov     eax, SNS_NO_MEDIUM
+        test    dl, ATAE_NM
         jnz     .set
         mov     eax, SNS_CHANGED
-        test    ah, ATAE_MC
+        test    dl, ATAE_MC
         jnz     .set
-        test    ah, ATAE_UNC
+        test    dl, ATAE_UNC
         jz      .not_unc
         mov     eax, SNS_WPROT          ; on a write the bit means protected
         cmp     byte [ata_op], ATA_WRITE
@@ -582,12 +614,12 @@ ata_result:
         jmp     .set
 .not_unc:
         mov     eax, SNS_NOT_FOUND
-        test    ah, ATAE_IDNF
+        test    dl, ATAE_IDNF
         jnz     .set
         mov     eax, SNS_REMOVAL_REQ
-        test    ah, ATAE_MCR
+        test    dl, ATAE_MCR
         jnz     .set
-        test    ah, ATAE_ABRT
+        test    dl, ATAE_ABRT
         jz      .hardware
         mov     eax, SNS_PREVENTED      ; refused while locked
         cmp     byte [ata_op], ATA_EJECT
@@ -595,13 +627,16 @@ ata_result:
         mov     eax, SNS_BAD_OPCODE     ; lock commands not supported
         cmp     byte [ata_op], ATA_DOOR_LOCK
         je      .set
+        cmp     byte [ata_op], ATA_SQ_PROTECT ; no software protection
+        je      .set
         cmp     byte [ata_op], ATA_DOOR_UNLOCK
         je      .set
         mov     eax, SNS_ABORTED
         jmp     .set
 .hardware:
         mov     eax, SNS_HARDWARE
-.set:   jmp     ata_set_sense
+.set:   pop     edx
+        jmp     ata_set_sense
 
 ; Select device BX and issue ATA command CH with sector count CL at LBA
 ; EAX (as CHS).  CF if the device stays busy.
@@ -614,6 +649,10 @@ ata_issue:
         pop     eax
         jc      .out
         call    ata_chs
+        mov     dx, 1                   ; features
+        call    ide_port
+        mov     al, [ata_feat]
+        out     dx, al
         mov     dx, 2                   ; sector count
         call    ide_port
         mov     al, cl
@@ -868,7 +907,8 @@ ata_ahci_exec:
         call    prd_add
 .nodata:
         mov     byte [x_atapi], 0
-        mov     byte [x_feat], 0
+        mov     al, [ata_feat]
+        mov     [x_feat], al
         mov     word [x_bcl], 0
         mov     byte [x_ata], 1
         call    ahci_exec
