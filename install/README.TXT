@@ -1,10 +1,14 @@
-AHCIASPI 0.4 - ASPI manager for ATAPI drives on AHCI and IDE controllers
+AHCIASPI 0.5 - ASPI manager for ATAPI drives on AHCI and IDE controllers
 ==========================================================================
 
 AHCIASPI.SYS is an ASPI manager (device SCSIMGR$) for DOS.  It makes ATAPI
 drives - CD/DVD, ZIP, LS-120, tape and others - usable for DOS ASPI
 drivers: the OpenASPI drivers that come with it, or others such as
 Adaptec's ASPICD.SYS, ASPIDISK.SYS, MKELS120.SYS or GUEST.EXE.
+
+ATA cartridge drives (SyQuest EZ135, EZFlyer 230: ATA, not ATAPI) become
+SCSI disks too, on IDE channels and AHCI ports.  A drive the BIOS already
+uses as a hard disk stays with the BIOS.
 
 The drives can be connected to
   - an AHCI SATA controller, directly or through a SATA/IDE adapter,
@@ -33,7 +37,7 @@ each one an option; INSTALL loads the ones chosen after AHCIASPI.SYS:
   ASPICDA.SYS  CD/DVD drives (on by default), with SHSUCDX for the drive
                letter and digital CD audio through VSBHDA (CDAUDIO.COM
                switches it)
-  ASPIFDD.SYS  ZIP, LS-120, LS-240, Clik!, Jaz (on by default)
+  ASPIFDD.SYS  ZIP, LS-120, LS-240, Clik!, Jaz, SyQuest (on by default)
   ASPIDSK.SYS  disks, card readers, USB sticks
   ASPITAP.SYS  tape drives (TAPECTL.COM)
 
@@ -129,6 +133,7 @@ Switches
   /NOAHCI     Do not use AHCI controllers.
   /NOIDE      Do not use IDE channels.
   /NOPCI      Only the standard IDE channels, no PCI IDE cards.
+  /NOATA      No ATA cartridge drives (SyQuest), ATAPI only.
   /P:port[,ctl]
               Additional IDE channel at I/O port "port" (hex) with the
               control port "ctl" (default port+206h).  May be repeated.

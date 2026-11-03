@@ -14,8 +14,8 @@
 ;                       [/NOAHCI] [/NOIDE] [/NOPCI] [/P:port[,ctl]]
 ;                       [/BIOSFIX] [/NOBIOSFIX] [/NOATA]
 ;
-; /NOATA: do not offer ATA cartridge drives (SyQuest EZ135, ...) on classic
-; IDE channels; see ata.inc
+; /NOATA: do not offer ATA cartridge drives (SyQuest EZ135, ...) on IDE
+; channels and AHCI ports; see ata.inc
 ; /BIOSFIX: work around the VDS bugs of Intel AHCI firmware under EMM386
 ; (biosfix.inc; on by default with an Intel AHCI controller)
 ;
@@ -50,7 +50,7 @@
 %include "ahci.inc"
 %include "aspi.inc"
 
-%define VERSION_STR '0.4'
+%define VERSION_STR '0.5'
 
 NPRD            equ     8               ; PRDT entries per command
 BOUNCE_SIZE     equ     800h            ; bounce buffer (2 KB, 2 KB aligned)
