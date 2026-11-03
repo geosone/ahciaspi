@@ -1,9 +1,11 @@
 ;=============================================================================
 ; ASPITEST.COM - exercise a DOS ASPI manager (SCSIMGR$)
 ;
-; Usage: ASPITEST [/E9] [/X]
+; Usage: ASPITEST [/E9] [/X] [/R]
 ;   /E9  mirror all output to port E9h (QEMU debug console)
 ;   /X   exit QEMU through isa-debug-exit (port F4h) when done
+;   /R   also REASSIGN BLOCKS for LBA 0 of every disk and print the
+;        result: on a real drive this moves sector 0 to a spare sector
 ;
 ; For every target: INQUIRY, TEST UNIT READY, READ CAPACITY, a sector read
 ; with READ(10) and READ(6), MODE SENSE(6), direction "auto" and an odd
@@ -388,6 +390,19 @@ test_target:
         call    report_zf
 
 .sense: call    test_extras
+        cmp     byte [opt_reassign], 0
+        je      .bogus
+        cmp     byte [devtype], 0       ; disks only
+        jne     .bogus
+        mov     di, cdb_reassign
+        mov     ecx, 8
+        mov     bx, reassign_list
+        mov     al, SRB_DIR_OUT
+        call    scsi
+        mov     si, msg_reassign
+        call    print
+        call    print_sense
+.bogus:
         ; invalid opcode must give CHECK CONDITION with ILLEGAL REQUEST
         mov     di, cdb_bogus
         xor     ecx, ecx
@@ -600,8 +615,12 @@ parse_args:
         lodsb
         and     al, 0DFh
         cmp     al, 'X'
-        jne     .e9
+        jne     .r
         mov     byte [opt_exit], 1
+        jmp     .l
+.r:     cmp     al, 'R'
+        jne     .e9
+        mov     byte [opt_reassign], 1
         jmp     .l
 .e9:    cmp     al, 'E'
         jne     .l
@@ -774,6 +793,10 @@ cdb_bogus       db      6, 0FFh, 0, 0, 0, 0, 0
 
 opt_e9          db      0
 opt_exit        db      0
+opt_reassign    db      0
+cdb_reassign    db      6, 07h, 0, 0, 0, 0, 0
+reassign_list   db      0, 0, 0, 4, 0, 0, 0, 0  ; one LBA: 0
+msg_reassign    db      'reassign: ', 0
 target          db      0
 hanum           db      0
 ha_count        db      0

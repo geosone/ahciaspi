@@ -10,6 +10,8 @@
 ;   START STOP UNIT (eject)            MEDIA EJECT
 ;   PREVENT ALLOW MEDIUM REMOVAL       DOOR LOCK / DOOR UNLOCK
 ;   INQUIRY                            from IDENTIFY DEVICE (vendor "ATA")
+;   REASSIGN BLOCKS                    SyQuest REASSIGN SECTOR (F8h) in
+;                                      super-user mode (FBh / FCh)
 ;   MODE SENSE (10), REQUEST SENSE     built here; the WP bit from
 ;                                      GET MEDIA STATUS where the drive
 ;                                      has it
@@ -39,6 +41,12 @@ ATA_DOOR_LOCK   equ     0DEh
 ATA_DOOR_UNLOCK equ     0DFh
 ATA_IDENTIFY    equ     0ECh
 ATA_EJECT       equ     0EDh
+; SyQuest vendor commands (SparQ Internal EIDE Technical Reference, 1997,
+; page 6-45). F8h is READ NATIVE MAX ADDRESS on other drives: it is only
+; sent after a drive has confirmed super-user mode.
+ATA_SQ_REASSIGN equ     0F8h            ; reassign the sector at the address
+ATA_SQ_SUPER    equ     0FBh            ; enter (cyl FFFFh) / confirm (F00Fh)
+ATA_SQ_LEAVE    equ     0FCh            ; leave super-user mode
 
 ; ATA error register
 ATAE_NM         equ     02h             ; no media
@@ -66,6 +74,8 @@ SNS_BAD_FIELD   equ     05h | (24h << 8)
 SNS_PREVENTED   equ     05h | (53h << 8) | (02h << 16)
 SNS_ABORTED     equ     0Bh
 SNS_HARDWARE    equ     04h | (44h << 8)
+SNS_NO_SPARE    equ     03h | (32h << 8) ; no defect spare location
+SNS_PARAM_LIST  equ     05h | (26h << 8) ; invalid field in parameter list
 
 dev_heads       times MAX_DEV db 0      ; ATA: CHS geometry in use
 dev_spt         times MAX_DEV db 0
@@ -82,6 +92,8 @@ ata_k           dw      0               ; data blocks still to move
 ata_cyl         dw      0
 ata_head        db      0
 ata_sec         db      0
+ata_raw         db      0               ; ata_chs keeps the registers set
+ata_defects     dw      0               ; REASSIGN BLOCKS: LBAs left
 
 ; Run the SCSI command in cdb_buf on ATA device BX.  Data goes to / comes
 ; from [x_bufp] (at most [x_rem] bytes).  Returns AL = XR_*; XR_CHECK has
@@ -126,6 +138,11 @@ ata_scsi:
         je      .startstop
         cmp     al, 1Eh                 ; PREVENT ALLOW MEDIUM REMOVAL
         je      .prevent
+        cmp     al, 07h                 ; REASSIGN BLOCKS
+        jne     .not_reassign
+        call    ata_reassign
+        jmp     .done
+.not_reassign:
         cmp     al, SCSI_MODE_SENSE10
         je      .msense
         cmp     al, SCSI_MODE_SELECT10  ; nothing to select
@@ -418,6 +435,123 @@ ata_range:
         stc
         ret
 
+; REASSIGN BLOCKS (short list, 4-byte LBAs) on ATA device BX: SyQuest's
+; four-command sequence. Enter super-user mode (the drive aborts this, as
+; documented), confirm it (a drive without the function aborts this too:
+; invalid opcode, nothing else sent), REASSIGN SECTOR for each LBA, and
+; leave super-user mode, also after a failure. Nothing is retried.
+; -> ata_res / sense
+ata_reassign:
+        test    byte [cdb_buf+1], 03h   ; LONGLBA, LONGLIST
+        jnz     .badfield
+        ; the parameter list: header, then the LBAs (big-endian)
+        mov     ecx, [x_rem]
+        cmp     ecx, 4
+        jb      .badfield
+        cmp     ecx, ATA_BUILD_OFS
+        jbe     .copy
+        mov     ecx, ATA_BUILD_OFS
+.copy:  push    ecx
+        call    ata_mem_out
+        pop     ecx
+        mov     si, [bounce_ptr]
+        movzx   eax, word [si+2]
+        xchg    al, ah                  ; defect list length
+        test    al, 3
+        jnz     .badlist
+        add     eax, 4
+        cmp     eax, ecx
+        ja      .badlist
+        sub     eax, 4
+        shr     ax, 2
+        mov     [ata_defects], ax
+        or      ax, ax
+        jz      .out                    ; nothing to reassign
+        ; every LBA on the cartridge before anything is sent
+        mov     cx, ax
+        add     si, 4
+        mov     di, bx
+        shl     di, 2
+.range: mov     eax, [si]
+        BSWAP_EAX
+        cmp     eax, [dev_cap+di]
+        jae     .badrange
+        add     si, 4
+        loop    .range
+        ; enter: the drive aborts this; only a timeout counts
+        mov     word [ata_cyl], 0FFFFh
+        mov     ch, ATA_SQ_SUPER
+        call    .raw
+        cmp     al, XR_TIMEOUT
+        je      .result
+        ; confirm: an abort means the drive has no super-user mode
+        mov     word [ata_cyl], 0F00Fh  ; cylinder low 0Fh, high F0h
+        mov     ch, ATA_SQ_SUPER
+        call    .raw
+        cmp     al, XR_OK
+        je      .super
+        cmp     al, XR_CHECK
+        jne     .result
+        test    ah, ATAE_ABRT
+        jz      .result
+        mov     eax, SNS_BAD_OPCODE
+        jmp     ata_set_sense
+.super: mov     si, [bounce_ptr]
+        add     si, 4
+.next:  mov     eax, [si]
+        BSWAP_EAX
+        push    si
+        mov     byte [ata_op], ATA_SQ_REASSIGN
+        mov     cx, (ATA_SQ_REASSIGN << 8) | 1
+        call    ata_nodata
+        pop     si
+        cmp     al, XR_OK
+        jne     .failed
+        add     si, 4
+        dec     word [ata_defects]
+        jnz     .next
+.failed:
+        push    ax                      ; leave super-user mode in any case
+        mov     word [ata_cyl], 0
+        mov     ch, ATA_SQ_LEAVE
+        call    .raw
+        mov     dx, ax
+        pop     ax
+        cmp     al, XR_OK
+        jne     .reassign_failed
+        mov     ax, dx                  ; the reassignments worked: leaving?
+        jmp     .result
+.reassign_failed:
+        cmp     al, XR_CHECK
+        jne     .result
+        test    ah, ATAE_ABRT           ; refused: no spare left
+        jz      .result
+        mov     eax, SNS_NO_SPARE
+        jmp     ata_set_sense
+.result:
+        mov     byte [ata_op], 0
+        jmp     ata_result
+.badrange:
+        mov     eax, SNS_RANGE
+        jmp     ata_set_sense
+.badlist:
+        mov     eax, SNS_PARAM_LIST
+        jmp     ata_set_sense
+.badfield:
+        mov     eax, SNS_BAD_FIELD
+        jmp     ata_set_sense
+.out:   ret
+; command CH, no data, with the registers in ata_cyl (head, sector 0)
+.raw:   mov     byte [ata_op], ch
+        mov     byte [ata_head], 0
+        mov     byte [ata_sec], 0
+        mov     byte [ata_raw], 1
+        xor     eax, eax
+        xor     cl, cl
+        call    ata_nodata
+        mov     byte [ata_raw], 0
+        ret
+
 ; Is there a readable cartridge?  VERIFY of sector 0 reports no media and a
 ; media change.  -> ata_res / sense
 ata_media:
@@ -505,9 +639,13 @@ ata_issue:
 .out:   popad
         ret
 
-; LBA EAX of device BX -> ata_sec, ata_head, ata_cyl (registers kept)
+; LBA EAX of device BX -> ata_sec, ata_head, ata_cyl (registers kept).
+; With ata_raw set they are left as the caller set them.
 ata_chs:
-        pushad
+        cmp     byte [ata_raw], 0
+        je      .lba
+        ret
+.lba:   pushad
         movzx   esi, byte [dev_spt+bx]
         xor     edx, edx
         div     esi

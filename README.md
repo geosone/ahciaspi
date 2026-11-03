@@ -110,6 +110,26 @@ command:
 | START STOP UNIT (eject) | MEDIA EJECT |
 | PREVENT ALLOW MEDIUM REMOVAL | DOOR LOCK, DOOR UNLOCK |
 | INQUIRY, MODE SENSE, REQUEST SENSE | built from IDENTIFY DEVICE and the last error |
+| REASSIGN BLOCKS | SyQuest REASSIGN SECTOR (F8h) in super-user mode |
+
+REASSIGN BLOCKS follows the SyQuest *SparQ Internal EIDE Technical
+Reference* (1997, page 6-45). It takes the short list with 4-byte LBAs and
+checks every LBA against the cartridge before anything is sent. Then:
+
+1. FBh with cylinder FFFFh enters super-user mode. The drive aborts this
+   by design; only a timeout counts.
+2. FBh with cylinder low 0Fh, high F0h confirms it. If the drive aborts
+   this, it has no super-user mode, and the answer is ILLEGAL REQUEST,
+   invalid opcode.
+3. F8h for each LBA.
+4. FCh to leave super-user mode, also after a failure.
+
+On other drives F8h is READ NATIVE MAX ADDRESS, so it is sent only after
+the drive confirmed step 2. A refused F8h gives MEDIUM ERROR, no defect
+spare location (03/32). Only the refusal at step 2 is tested (86Box EZ135:
+ILLEGAL REQUEST). Whether the EZ135 or EZFlyer have super-user mode is not
+documented. These drives have no format command; SyQuest's own SQATPREP
+partitions, writes a FAT, and offers read-only VERIFY and pattern tests.
 
 MODE SENSE takes its WP bit from GET MEDIA STATUS. A drive without that
 command aborts it, and the bit stays clear. GET MEDIA STATUS also reports a
