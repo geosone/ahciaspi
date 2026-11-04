@@ -1818,9 +1818,9 @@ srb_disk_info:
         mov     [es:si+SRB_DriveFlags], ax      ; not an INT 13h drive
         mov     [es:si+SRB_Heads], ax
         mov     al, [dev_bios+bx]
-        or      al, al
-        jz      .done
-        ; an ATA cartridge drive the BIOS has as a hard disk: DOS has it too
+        cmp     al, DB_NONE
+        je      .done
+        ; a drive the BIOS has as a floppy or hard disk: DOS has it too
         mov     byte [es:si+SRB_DriveFlags], 01h
         mov     [es:si+SRB_Int13HDriveInfo], al
         mov     al, [dev_heads+bx]
@@ -3644,6 +3644,7 @@ probe_port:
         call    identify_packet
         jc      .try_ata                ; the signature is not always set
         call    inquiry_dev
+        call    find_bios_drive
         inc     byte [dev_count]
         cmp     byte [opt_quiet], 0
         jne     .out
@@ -3872,6 +3873,7 @@ probe_ide:
         jmp     .found
 .atapi: and     byte [dev_flags+bx], ~(DF_DMA | DF_DMADIR)  ; PIO only
         call    inquiry_dev
+        call    find_bios_drive
 .found: inc     byte [dev_count]
         cmp     byte [opt_quiet], 0
         jne     .out
@@ -4092,27 +4094,43 @@ ata_init_params:
 .out:   popad
         ret
 
-; Does the BIOS use ATA device BX as a hard disk?  For each BIOS disk:
+; Does the BIOS use device BX as a drive?  The floppy drives first (a BIOS
+; may map an ATAPI LS-120 or ZIP as A:), then the hard disks.  For each:
 ;  - EDD 3.0 names a SATA disk by controller (PCI bus, device, function)
 ;    and port;
 ;  - EDD 1.1's device parameter table names an IDE disk by port and
 ;    master / slave;
-;  - a BIOS disk with EDD but neither counts when it has the same size;
-;  - a BIOS without EDD: the same CHS geometry.
-; -> dev_bios = drive number or 0
+;  - an ATA hard disk with EDD but neither counts when it has the same size;
+;  - an ATA hard disk without EDD: the same CHS geometry.
+; An ATAPI drive, and any drive on a floppy number, counts only by its path.
+; -> dev_bios = drive number, 0FFh for none (00h is a drive)
 find_bios_drive:
         pushad
         push    es
-        mov     byte [dev_bios+bx], 0
+        mov     byte [dev_bios+bx], DB_NONE
         mov     [fb_dev], bx
+        xor     ax, ax
+        mov     es, ax
+        mov     ax, [es:410h]           ; equipment: floppy drives
+        xor     cl, cl
+        test    al, 01h
+        jz      .nofd
+        mov     cl, al
+        shr     cl, 6
+        inc     cl
+.nofd:  mov     [fb_count], cl
+        mov     byte [fb_drive], 0
+.drive: cmp     byte [fb_count], 0
+        jne     .ask
+        cmp     byte [fb_drive], 80h    ; the floppies done: the hard disks
+        jae     .end
         xor     ax, ax
         mov     es, ax
         mov     cl, [es:475h]           ; BIOS hard disks
         mov     [fb_count], cl
         mov     byte [fb_drive], 80h
-.drive: cmp     byte [fb_count], 0
-        jne     .ask
-        jmp     .done
+        jmp     .drive
+.end:   jmp     .done
 .ask:   mov     ah, 41h
         mov     bx, 55AAh
         mov     dl, [fb_drive]
@@ -4184,6 +4202,8 @@ find_bios_drive:
         jnz     .next
         jmp     .owned
 .capacity:
+        call    fb_guess_ok             ; only an ATA hard disk by its size
+        jc      .next
         cmp     word [edd_buf], 18h     ; sectors given?
         jb      .next
         cmp     dword [edd_buf+14h], 0
@@ -4195,6 +4215,9 @@ find_bios_drive:
         jne     .next
         jmp     .owned
 .geometry:
+        mov     bx, [fb_dev]
+        call    fb_guess_ok             ; only an ATA hard disk by geometry
+        jc      .next
         mov     ah, 08h
         mov     dl, [fb_drive]
         push    es
@@ -4237,6 +4260,18 @@ find_bios_drive:
         jmp     .drive
 .done:  pop     es
         popad
+        ret
+
+; may device BX be matched to drive fb_drive by size or geometry?  Only an
+; ATA device on a hard disk number.  CF if not.
+fb_guess_ok:
+        test    byte [dev_flags+bx], DF_ATA
+        jz      .no
+        test    byte [fb_drive], 80h
+        jz      .no
+        clc
+        ret
+.no:    stc
         ret
 
 EDD_BUF_LEN     equ     42h
@@ -4312,10 +4347,10 @@ print_dev:
         mov     si, [type_names+di]
         call    print
         test    byte [dev_flags+bx], DF_ATA
-        jz      .atapi
+        jz      .bios
         mov     si, msg_ata
         call    print
-        cmp     byte [dev_bios+bx], 0
+.bios:  cmp     byte [dev_bios+bx], DB_NONE
         je      .atapi
         mov     si, msg_bios
         call    print

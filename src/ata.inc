@@ -84,7 +84,8 @@ SNS_PARAM_LIST  equ     05h | (26h << 8) ; invalid field in parameter list
 dev_heads       times MAX_DEV db 0      ; ATA: CHS geometry in use
 dev_spt         times MAX_DEV db 0
 dev_cap         times MAX_DEV dd 0      ; ATA: sectors
-dev_bios        times MAX_DEV db 0      ; ATA: INT 13h drive using it, 0 none
+DB_NONE         equ     0FFh
+dev_bios        times MAX_DEV db DB_NONE ; INT 13h drive using it, DB_NONE none
 ata_sense       times MAX_DEV dd 0      ; ATA: sense of the last command
 
 ata_res         db      0               ; XR_* of the request
