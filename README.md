@@ -160,14 +160,22 @@ would also hit the disk beside it. On AHCI, a timeout resets that one port,
 as it does for ATAPI devices.
 
 If the BIOS uses the drive as a hard disk (the CMOS type set), DOS has it as
-well. GET DISK INFO then reports it as an INT 13h drive with DOS, and the
-OpenASPI drivers leave it alone. The BIOS disk is found by:
+well. GET DISK INFO then reports it as an INT 13h drive with DOS, and
+OpenASPI's ASPIFDD takes over the letter DOS has for it (ASPIDSK leaves it
+alone). The BIOS disk is found by:
 - the EDD 3.0 device path of a SATA disk (controller and port);
 - the EDD 1.1 device parameter table of an IDE disk (port, master/slave);
 - with EDD but neither, the same size;
 - without EDD, the same CHS geometry.
 
-`/V` shows such a drive as `ATA, BIOS 80h`. On a channel the BIOS does not
+ATAPI drives are matched the same way, by the device path or table only. A
+BIOS may also map an ATAPI LS-120 or ZIP as a floppy drive (ReBIOS's
+SeaBIOS boots them as A: or B:); the floppy drives (0:410h) are looked at
+before the hard disks, so GET DISK INFO reports BIOS drive 00h or 01h. This
+needs EDD on the floppy number, which ReBIOS's SeaBIOS gives such a drive.
+
+`/V` shows such a drive as `ATA, BIOS 80h`, or with the BIOS drive of an
+ATAPI device. On a channel the BIOS does not
 use, such as a tertiary ISA channel with `/P:1E8,3EE`, the drive belongs to
 AHCIASPI.
 

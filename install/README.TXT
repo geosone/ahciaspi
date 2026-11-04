@@ -1,4 +1,4 @@
-AHCIASPI 0.5 - ASPI manager for ATAPI drives on AHCI and IDE controllers
+AHCIASPI 0.6 - ASPI manager for ATAPI drives on AHCI and IDE controllers
 ==========================================================================
 
 AHCIASPI.SYS is an ASPI manager (device SCSIMGR$) for DOS.  It makes ATAPI
@@ -8,7 +8,8 @@ Adaptec's ASPICD.SYS, ASPIDISK.SYS, MKELS120.SYS or GUEST.EXE.
 
 ATA cartridge drives (SyQuest EZ135, EZFlyer 230: ATA, not ATAPI) become
 SCSI disks too, on IDE channels and AHCI ports.  A drive the BIOS already
-uses as a hard disk stays with the BIOS.
+uses itself (a hard disk, or an LS-120 or ZIP the BIOS boots as A:, B: or
+C:) is reported as such; ASPIFDD then takes over the letter DOS has for it.
 
 The drives can be connected to
   - an AHCI SATA controller, directly or through a SATA/IDE adapter,
