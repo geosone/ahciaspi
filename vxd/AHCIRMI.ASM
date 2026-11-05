@@ -16,7 +16,7 @@
 ;--- Entry: AX = Windows version, BX = flags, SI = environment segment
 ;--- Exit:  AX = 0 (load) or 8001h (don't load, no message), BX = SI = 0
 ;---
-;--- Copyright (C) 2026 GeosOne.  GNU General Public License version 3.
+;--- Copyright (C) 2026 GeosOne.  GNU General Public License version 2 or later.
 
 	.386
 _RCODE segment dword use16 public 'RCODE'

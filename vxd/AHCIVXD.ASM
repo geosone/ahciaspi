@@ -4,7 +4,7 @@
 ;--- callable wrappers for VMM and BlockDev services.  The disk code is in
 ;--- AHCIVXD.C (cdecl, Open Watcom -ecc).
 ;---
-;--- Copyright (C) 2026 GeosOne.  GNU General Public License version 3.
+;--- Copyright (C) 2026 GeosOne.  GNU General Public License version 2 or later.
 
 	.386p
 	.model flat, c

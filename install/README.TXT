@@ -20,7 +20,9 @@ The drives can be connected to
 
 AHCIASPI also works in the DOS boxes of Windows 3.x.
 
-License: GNU General Public License version 3 (see LICENSE.TXT).
+License: GNU General Public License version 2 or (at your option) any later
+version (see LICENSE.TXT).  The installer (GDI) is under version 3 (see
+GPL3.TXT).
 Source:  https://github.com/geosone/ahciaspi
 
 
@@ -154,7 +156,8 @@ Files
   ASPITEST.COM   test program: lists the ASPI host adapters and devices
   ASPISCAN.COM   which devices the OpenASPI drivers would take (OpenASPI)
   README.TXT     this file
-  LICENSE.TXT    GNU General Public License version 3
+  LICENSE.TXT    GNU General Public License version 2
+  GPL3.TXT       GNU General Public License version 3 (the installer)
   INSTALL.EXE    GeosOne DOS Installer (https://github.com/geosone/gdi)
   INSTALL.INI    its configuration
 
@@ -163,7 +166,7 @@ Optional (installed when selected):
   DLMANIPF.SYS   Drive Letter Manipulator, fixed version (see DLMANIPF.TXT)
   DLMANIPF.COM
   DLMANIPF.TXT
-  ASPICDA.SYS    OpenASPI: CD/DVD (GPL 3)
+  ASPICDA.SYS    OpenASPI: CD/DVD (GPL 2+)
   SHSUCDX.COM    CD-ROM redirector with digital CD audio (SHSUCD of Jason
   CDAUDIO.COM    Hood, changed; https://github.com/geosone/shsucd)
   SHSUCD.TXT     its readme, SHSUCD.LIC its license

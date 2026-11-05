@@ -62,6 +62,7 @@ package: all dlmanip
 	cp install/INSTALL.INI install/README.TXT install/DLMANIPF.TXT $(PKG)/
 	sed 's/$$/\r/' LICENSE > $(PKG)/LICENSE.TXT
 	cp $(GDI) $(PKG)/INSTALL.EXE
+	sed 's/$$/\r/' $(dir $(GDI))../LICENSE > $(PKG)/GPL3.TXT
 	cd $(PKG) && rm -f ../ahciaspi.zip && zip -q -9 ../ahciaspi.zip *
 	# a 1.44 MB disk (mtools), e.g. for mkdosset.ps1 -Extra of msdosinst
 	cd $(PKG) && rm -f ../AHCIASPI.IMG && mformat -C -f 1440 -v AHCIASPI -i ../AHCIASPI.IMG :: && mcopy -i ../AHCIASPI.IMG * ::

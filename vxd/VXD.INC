@@ -1,7 +1,7 @@
 ;--- VXD.INC: definitions for the AHCIVXD Windows 3.1 virtual device,
 ;--- written from the documented interfaces of VMM, BlockDev and Int13
 ;--- (service numbers = positions in the Windows 3.1 service tables).
-;--- Copyright (C) 2026 GeosOne.  GNU General Public License version 3.
+;--- Copyright (C) 2026 GeosOne.  GNU General Public License version 2 or later.
 
 DDK_VERSION          equ 030Ah
 UNDEFINED_DEVICE_ID  equ 0

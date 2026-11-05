@@ -1,7 +1,7 @@
 ;--- RTVXD.ASM: the 64-bit shift helpers Open Watcom calls (the C library
 ;--- is not linked into the VxD).  EDX:EAX = value, ECX:EBX = count,
 ;--- result in EDX:EAX; other registers preserved.
-;--- Copyright (C) 2026 GeosOne.  GNU General Public License version 3.
+;--- Copyright (C) 2026 GeosOne.  GNU General Public License version 2 or later.
 
 	.386
 	.model flat

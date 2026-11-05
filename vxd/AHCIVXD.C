@@ -14,7 +14,7 @@
  * PIO32=0 (16-bit PIO), Int13=0 (don't handle INT 13h of the VMs),
  * IgnoreChain=1 (load although a program hooked DOS's Int 13h path).
  *
- * Copyright (C) 2026 GeosOne.  GNU General Public License version 3. */
+ * Copyright (C) 2026 GeosOne.  GNU General Public License version 2 or later. */
 
 typedef unsigned char u8;
 typedef unsigned short u16;

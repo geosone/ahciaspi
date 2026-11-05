@@ -217,4 +217,8 @@ Build with `-DE9LOG` (nasm) to get every ASPI command on the QEMU debug console 
 
 ## License
 
-GNU General Public License version 3, see [LICENSE](LICENSE). DLMANIP source: public domain, Joe Forster/STA.
+GNU General Public License version 2 or (at your option) any later
+version, see [LICENSE](LICENSE). DLMANIP source: public domain, Joe
+Forster/STA. The installer of the package
+([GDI](https://github.com/geosone/gdi)) is under version 3, its text
+`GPL3.TXT`.
