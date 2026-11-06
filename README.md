@@ -209,9 +209,11 @@ Build with `-DE9LOG` (nasm) to get every ASPI command on the QEMU debug console 
 
 ## Native C transport
 
-`native/ahci.c` is the AHCI transport in C for [OpenASPI](https://github.com/geosone/OpenAspi)'s native layer, for 32- and 64-bit systems that drive the controller themselves, such as the GDOS kernel of [GonWare](https://gitea.disconnected-by-peer.at/GonSoft/GonWare). It takes over an AHCI controller (BIOS/OS handoff included) and offers each port with a device as one target: ATA disks through OpenASPI's SCSI/ATA translation with DMA commands, ATAPI devices (also behind IDE to SATA adapters) with the CDB as a packet, translated by OpenASPI's shared ATAPI rules, and REQUEST SENSE as autosense. Commands are polled. The port handling follows `AHCIASPI.SYS`, but the controller stays with the transport instead of going back to the BIOS after each command.
+`native/ahci.c` and `native/ide.c` are the AHCI and IDE transports in C for [OpenASPI](https://github.com/geosone/OpenAspi)'s native layer, for 32- and 64-bit systems that drive the controller themselves, such as the GDOS kernel of [GonWare](https://gitea.disconnected-by-peer.at/GonSoft/GonWare). The AHCI transport takes over an AHCI controller (BIOS/OS handoff included) and offers each port with a device as one target: ATA disks through OpenASPI's SCSI/ATA translation with DMA commands, ATAPI devices (also behind IDE to SATA adapters) with the CDB as a packet. The port handling follows `AHCIASPI.SYS`, but the controller stays with the transport instead of going back to the BIOS after each command. It needs a flat address space for the HBA registers and DMA memory.
 
-It needs a flat address space for the HBA registers and DMA memory, so it is not part of the DOS build; the code DOS and the native systems can share lives in OpenASPI. The classic IDE transport follows.
+The IDE transport drives the channels of PCI IDE controllers in legacy or native mode, or channels given by port, as one adapter with targets 0-3 (primary master, primary slave, secondary master, secondary slave): ATA disks through the SCSI/ATA translation with PIO, ATAPI devices with the PACKET protocol of `AHCIASPI.SYS`. It needs only port I/O and also compiles with Open Watcom for 16-bit DOS (`make native-dos-check`).
+
+Both run ATAPI requests through OpenASPI's shared ATAPI handling (6- to 10-byte commands, MODE SENSE, REQUEST SENSE as autosense). Commands are polled.
 
 It builds with CMake as `AHCIASPI::native`, on top of the `OpenASPI::native` target of a parent project or of an OpenASPI checkout next to this one (`OPENASPI_SOURCE_DIR`):
 
@@ -219,7 +221,7 @@ It builds with CMake as `AHCIASPI::native`, on top of the `OpenASPI::native` tar
 cmake -S . -B build/native -G Ninja && ninja -C build/native
 ```
 
-The embedding system provides the host services of `openaspi/native/host.h` and calls `ahciaspi_probe_ahci()` for each controller of PCI class 010601h.
+The embedding system provides the host services of `openaspi/native/host.h` and calls `ahciaspi_probe_ahci()` for each controller of PCI class 010601h and `ahciaspi_probe_ide()` for each of class 0101h (or `ahciaspi_probe_ide_ports()` for channels without PCI).
 
 ## Tests
 

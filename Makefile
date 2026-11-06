@@ -44,7 +44,15 @@ test: all
 clean:
 	rm -rf build
 
-.PHONY: all test clean dlmanip
+.PHONY: all test clean dlmanip native-dos-check
+
+# The native IDE transport is 16-bit clean: compile it with Open Watcom
+# for DOS too, so it stays usable there (the AHCI transport needs a flat
+# address space and is not checked). OPENASPI_SRC = OpenASPI source tree.
+WCC ?= wcc
+OPENASPI_SRC ?= ../OpenAspi
+native-dos-check: | build
+	$(WCC) -q -bt=dos -ms -0 -w4 -we -zq -os -s -iinclude -i$(OPENASPI_SRC)/include -fo=build/ide16.obj native/ide.c
 
 # distribution: INSTALL.EXE comes from the GeosOne DOS Installer
 # (https://github.com/geosone/gdi)
