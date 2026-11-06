@@ -94,10 +94,8 @@ struct port {
     oa_u8 *ct;            /* command table: CFIS, ACMD, PRDT */
     oa_u8 *bounce;
     oa_u64 cl_bus, fis_bus, ct_bus, bounce_bus;
-    int atapi;
-    int atapi_dma, atapi_dmadir;
-    unsigned packet_size;
-    oa_u8 type;           /* ATAPI: peripheral type from INQUIRY */
+    int is_atapi;
+    struct oa_atapi atapi;
     struct oa_sat sat;
 };
 
@@ -325,68 +323,33 @@ static int ata_cmd(void *ctx, struct oa_ata_cmd *c)
 
 /* --- ATAPI devices ----------------------------------------------------- */
 
-static int packet_cmd(struct port *p, const oa_u8 packet[16], int write, void *buf, oa_u32 len,
-                      oa_u32 timeout_ms, oa_u32 *tfd, oa_u32 *xfer)
+static int packet_cmd(void *ctx, const oa_u8 packet[16], oa_u8 dir, void *buf, oa_u32 len,
+                      oa_u32 timeout_ms, oa_u8 *status, oa_u8 *error, oa_u32 *xfer)
 {
+    struct port *p = ctx;
     oa_u8 fis[20];
+    oa_u32 tfd;
+    int r;
 
+    if (dir == OA_DIR_NONE) {
+        len = 0;
+    }
     memset(fis, 0, sizeof(fis));
     fis[0] = 0x27u;
     fis[1] = 0x80u;
     fis[2] = ATA_PACKET;
-    if (len != 0u && p->atapi_dma) {
+    if (len != 0u && p->atapi.dma) {
         fis[3] = 0x01u; /* DMA */
-        if (!write && p->atapi_dmadir) {
+        if (dir == OA_DIR_IN && p->atapi.dmadir) {
             fis[3] |= 0x04u;
         }
     }
     fis[5] = 0xFEu; /* byte count limit FFFEh for PIO data */
     fis[6] = 0xFFu;
-    return port_exec(p, fis, packet, write, buf, len, timeout_ms, tfd, xfer);
-}
-
-static void atapi_execute(struct port *p, struct oa_srb *srb)
-{
-    oa_u8 packet[16], sense_cdb[16];
-    oa_u16 alloc10 = 0;
-    oa_u32 tfd, xfer, len = srb->data_len;
-    void *buf = srb->data;
-    int kind, r;
-
-    kind = oa_atapi_translate(packet, srb->cdb, srb->cdb_len, p->type, &alloc10);
-    if (kind == OA_ATAPI_XLATE_MODE_SENSE) {
-        len = alloc10; /* at most 259 bytes, fits the bounce buffer */
-        buf = p->bounce;
-        oa_put_be16(packet + 7, (oa_u16)len);
-    }
-    r = packet_cmd(p, packet, srb->dir == OA_DIR_OUT, srb->dir == OA_DIR_NONE ? 0 : buf,
-                   srb->dir == OA_DIR_NONE ? 0 : len, srb->timeout_ms, &tfd, &xfer);
-    if (r != OA_HOST_OK) {
-        srb->host_status = (oa_u8)r;
-        return;
-    }
-    if (tfd & TFD_ERR) {
-        srb->target_status = OA_STATUS_CHECK_CONDITION;
-        memset(sense_cdb, 0, sizeof(sense_cdb));
-        sense_cdb[0] = OA_SCSI_REQUEST_SENSE;
-        sense_cdb[4] = 18;
-        if (packet_cmd(p, sense_cdb, 0, srb->sense, 18, 5000, &tfd, &xfer) == OA_HOST_OK &&
-            !(tfd & TFD_ERR) && xfer >= 8u) {
-            srb->sense_len = (oa_u8)xfer;
-        } else {
-            oa_atapi_sense_from_error(srb->sense, (oa_u8)(tfd >> 8));
-            srb->sense_len = 18;
-        }
-        return;
-    }
-    if (kind == OA_ATAPI_XLATE_MODE_SENSE) {
-        xfer = oa_atapi_mode10_to_6(p->bounce, (oa_u16)xfer);
-        if (xfer > srb->data_len) {
-            xfer = srb->data_len;
-        }
-        memcpy(srb->data, p->bounce, xfer);
-    }
-    srb->residual = srb->dir == OA_DIR_NONE ? 0 : srb->data_len - xfer;
+    r = port_exec(p, fis, packet, dir == OA_DIR_OUT, buf, len, timeout_ms, &tfd, xfer);
+    *status = (oa_u8)tfd;
+    *error = (oa_u8)(tfd >> 8);
+    return r;
 }
 
 /* --- the adapter ------------------------------------------------------- */
@@ -400,8 +363,8 @@ static void ahci_execute(struct oa_hba *hba, struct oa_srb *srb)
         srb->host_status = OA_HOST_NO_DEVICE;
         return;
     }
-    if (p->atapi) {
-        atapi_execute(p, srb);
+    if (p->is_atapi) {
+        oa_atapi_execute(&p->atapi, srb);
     } else {
         oa_sat_execute(&p->sat, srb);
     }
@@ -430,31 +393,21 @@ static int port_alloc(struct port *p, int below_4g)
     return p->bounce ? 0 : -1;
 }
 
-/* IDENTIFY PACKET DEVICE and INQUIRY for an ATAPI port. */
+/* IDENTIFY PACKET DEVICE, then the shared ATAPI setup. */
 static int atapi_init(struct port *p)
 {
-    oa_u8 fis[20], cdb[16], inq[36];
-    oa_u16 *id = p->sat.identify;
+    oa_u8 fis[20];
     oa_u32 tfd, xfer;
 
     memset(fis, 0, sizeof(fis));
     fis[0] = 0x27u;
     fis[1] = 0x80u;
     fis[2] = ATA_IDENTIFY_PACKET;
-    if (port_exec(p, fis, 0, 0, id, 512, 5000, &tfd, &xfer) != OA_HOST_OK || (tfd & TFD_ERR)) {
+    if (port_exec(p, fis, 0, 0, p->sat.identify, 512, 5000, &tfd, &xfer) != OA_HOST_OK ||
+        (tfd & TFD_ERR)) {
         return -1;
     }
-    p->packet_size = OA_ATAPI_PACKET_SIZE(id[0]);
-    p->atapi_dma = (id[49] & 0x0100u) != 0u;
-    p->atapi_dmadir = (id[62] & 0x8000u) != 0u;
-    memset(cdb, 0, sizeof(cdb));
-    cdb[0] = OA_SCSI_INQUIRY;
-    cdb[4] = sizeof(inq);
-    memset(inq, 0, sizeof(inq));
-    if (packet_cmd(p, cdb, 0, inq, sizeof(inq), 5000, &tfd, &xfer) == OA_HOST_OK && !(tfd & TFD_ERR)) {
-        p->type = (oa_u8)(inq[0] & 0x1Fu);
-    }
-    return 0;
+    return oa_atapi_init(&p->atapi, packet_cmd, p, p->sat.identify) == OA_HOST_OK ? 0 : -1;
 }
 
 static void hex(char *out, oa_u32 v, unsigned digits)
@@ -536,8 +489,8 @@ int ahciaspi_probe_ahci(oa_u32 pci)
             break;
         }
         port_start(p);
-        p->atapi = rd(p->regs, PxSIG) == SIG_ATAPI;
-        if (p->atapi ? atapi_init(p) < 0
+        p->is_atapi = rd(p->regs, PxSIG) == SIG_ATAPI;
+        if (p->is_atapi ? atapi_init(p) < 0
                      : oa_sat_init(&p->sat, ata_cmd, p, 1) != OA_HOST_OK) {
             oa_host_log(OA_LOG_WARN, "AHCI: port %u: device does not answer\n", i);
             port_stop(p);

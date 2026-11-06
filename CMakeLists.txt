@@ -26,7 +26,7 @@ if(NOT TARGET OpenASPI::native)
   add_subdirectory("${OPENASPI_SOURCE_DIR}" openaspi EXCLUDE_FROM_ALL)
 endif()
 
-add_library(ahciaspi_native STATIC native/ahci.c)
+add_library(ahciaspi_native STATIC native/ahci.c native/ide.c)
 target_include_directories(ahciaspi_native PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(ahciaspi_native PUBLIC OpenASPI::native)
 set_target_properties(ahciaspi_native PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
