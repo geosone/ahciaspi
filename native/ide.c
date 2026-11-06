@@ -203,9 +203,9 @@ static int ata_cmd(void *ctx, struct oa_ata_cmd *c)
     if (c->dma) {
         return OA_HOST_UNSUPPORTED;
     }
-    if (d->sat.sector_size > 512u && c->len >= d->sat.sector_size &&
-        c->len % d->sat.sector_size == 0u) {
-        block = d->sat.sector_size;
+    if (d->sat.emu.block_size > 512u && c->len >= d->sat.emu.block_size &&
+        c->len % d->sat.emu.block_size == 0u) {
+        block = d->sat.emu.block_size;
     }
     if (select_dev(d, (oa_u8)(c->device | (c->lba48 ? 0u : (oa_u8)((c->lba >> 24) & 0x0Fu)))) < 0) {
         return OA_HOST_TIMEOUT;

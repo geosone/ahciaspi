@@ -264,6 +264,7 @@ static int port_exec(struct port *p, const oa_u8 cfis[20], const oa_u8 *packet, 
     *(volatile oa_u32 *)(ch + 12) = (oa_u32)(p->ct_bus >> 32);
 
     wr(p->regs, PxIS, 0xFFFFFFFFul);
+    oa_host_mb(); /* command table and PRDT before the doorbell */
     wr(p->regs, PxCI, 1);
     end = oa_host_time_us() + (oa_u64)(timeout_ms ? timeout_ms : 30000u) * 1000u;
     for (;;) {
@@ -281,6 +282,7 @@ static int port_exec(struct port *p, const oa_u8 cfis[20], const oa_u8 *packet, 
             return OA_HOST_TIMEOUT;
         }
     }
+    oa_host_mb(); /* completion before the data */
     *tfd = rd(p->regs, PxTFD);
     *xfer = *(volatile oa_u32 *)(ch + 4);
     if (*xfer > len) {
