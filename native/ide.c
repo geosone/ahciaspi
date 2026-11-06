@@ -384,18 +384,21 @@ static int chan_reset(struct ide_chan *ch)
 static void dev_probe(struct ide_dev *d)
 {
     struct ide_chan *ch = d->ch;
-    oa_u8 sig1, sig2, st;
+    oa_u8 sig1, sig2;
+    int st;
     struct oa_ata_cmd c;
 
     wr(ch, IDE_SELECT, (oa_u8)(0xA0u | (d->slave ? 0x10u : 0u)));
     delay400(ch);
-    st = rd(ch, IDE_STATUS);
-    if (st == 0xFFu || st == 0x00u) {
-        return; /* nothing there */
+    if (rd(ch, IDE_STATUS) == 0xFFu) {
+        return; /* floating bus */
     }
-    if (wait_status(ch, ST_BSY, 0, 5000) < 0) {
+    st = wait_status(ch, ST_BSY, 0, 5000);
+    if (st < 0) {
         return;
     }
+    /* signature left by the reset; ATAPI devices report status 00h then
+     * (no DRDY), which would otherwise look like an empty position */
     sig1 = rd(ch, IDE_LBA1);
     sig2 = rd(ch, IDE_LBA2);
     if ((sig1 == 0x14u && sig2 == 0xEBu) || (sig1 == 0x69u && sig2 == 0x96u)) {
@@ -415,6 +418,9 @@ static void dev_probe(struct ide_dev *d)
         }
         d->atapi.dma = 0; /* PIO only on this transport */
     } else {
+        if (st == 0x00u) {
+            return; /* nothing there */
+        }
         if (oa_sat_init(&d->sat, ata_cmd, d, 0) != OA_HOST_OK) {
             return;
         }
