@@ -372,7 +372,7 @@ static void ahci_execute(struct oa_hba *hba, struct oa_srb *srb)
     }
 }
 
-static const struct oa_hba_ops ahci_ops = { ahci_execute, 0 };
+static const struct oa_hba_ops ahci_ops = { ahci_execute, 0, 0 };
 
 static int port_alloc(struct port *p, int below_4g)
 {

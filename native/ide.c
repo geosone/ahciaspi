@@ -353,7 +353,7 @@ static void ide_execute(struct oa_hba *hba, struct oa_srb *srb)
     }
 }
 
-static const struct oa_hba_ops ide_ops = { ide_execute, 0 };
+static const struct oa_hba_ops ide_ops = { ide_execute, 0, 0 };
 
 /* Software reset of the channel, then wait for both drives. Returns 0 when
  * the channel has registers at all. */
