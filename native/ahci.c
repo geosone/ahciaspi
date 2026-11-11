@@ -42,6 +42,7 @@
 #define CAP_S64A  0x80000000ul
 #define CAP_SCLO  0x01000000ul
 #define GHC_AE    0x80000000ul
+#define GHC_IE    0x00000002ul	/* global interrupt enable */
 #define CAP2_BOH  0x00000001ul
 #define BOHC_BOS  0x00000001ul
 #define BOHC_OOS  0x00000002ul
@@ -72,6 +73,7 @@
 
 #define PxIS_TFES  0x40000000ul
 #define PxIS_FATAL 0x78000000ul /* TFES | HBFS | HBDS | IFS */
+#define PxIE_MASK  0x7800000Ful /* the fatal causes + DHRS/PSS/DSS/SDBS completions */
 
 #define TFD_ERR 0x01u
 #define TFD_DRQ 0x08u
@@ -97,6 +99,8 @@ struct port {
     int is_atapi;
     struct oa_atapi atapi;
     struct oa_sat sat;
+    oa_host_event *ev;      /* completion event, NULL = poll this port */
+    volatile oa_u32 is_snap; /* PxIS causes the IRQ handler saw, OR'd per command */
 };
 
 struct ctrl {
@@ -135,6 +139,33 @@ static int wait_reg(volatile oa_u8 *base, unsigned off, oa_u32 mask, oa_u32 valu
         }
         oa_host_delay_us(10);
     }
+}
+
+/* The controller's MSI. HBA_IS names the ports that raised an interrupt; for
+ * each, snapshot and clear its PxIS causes (write-1-to-clear), signal that
+ * port's completion event, then clear the port's bit in HBA_IS. Interrupt
+ * context: only register I/O and the event signal. One MSI covers the whole
+ * controller -- a port runs one command at a time, so the waiter re-checks PxCI
+ * and the snapshot once woken. */
+static volatile int ahci_irq_seen;  /* an AHCI interrupt was delivered + handled */
+static int ahci_irq_logged;
+static void ahci_irq(void *arg)
+{
+    struct ctrl *c = arg;
+    oa_u32 is = rd(c->abar, HBA_IS);
+    if (!is)
+        return;
+    for (unsigned k = 0; k < c->nports; k++) {
+        struct port *p = c->ports[k];
+        if (is & (1ul << p->no)) {
+            oa_u32 pis = rd(p->regs, PxIS);
+            p->is_snap |= pis;
+            wr(p->regs, PxIS, pis);  /* clear the port's causes (RW1C) */
+            oa_host_event_signal(p->ev);
+        }
+    }
+    wr(c->abar, HBA_IS, is);         /* clear the handled ports in HBA_IS */
+    ahci_irq_seen = 1;
 }
 
 static int port_stop(struct port *p)
@@ -264,23 +295,34 @@ static int port_exec(struct port *p, const oa_u8 cfis[20], const oa_u8 *packet, 
     *(volatile oa_u32 *)(ch + 12) = (oa_u32)(p->ct_bus >> 32);
 
     wr(p->regs, PxIS, 0xFFFFFFFFul);
+    p->is_snap = 0;
     oa_host_mb(); /* command table and PRDT before the doorbell */
+    if (p->ev)
+        oa_host_event_reset(p->ev);
     wr(p->regs, PxCI, 1);
     end = oa_host_time_us() + (oa_u64)(timeout_ms ? timeout_ms : 30000u) * 1000u;
     for (;;) {
-        is = rd(p->regs, PxIS);
+        // On an interrupt-driven port the handler clears PxIS and records the
+        // causes in is_snap, so read the snapshot; a polled port reads PxIS live.
+        is = p->ev ? p->is_snap : rd(p->regs, PxIS);
         if (is & PxIS_FATAL) {
             *tfd = rd(p->regs, PxTFD);
             port_recover(p, !(is & PxIS_TFES));
             return (is & PxIS_TFES) ? OA_HOST_OK : OA_HOST_BUS_ERROR;
         }
         if (!(rd(p->regs, PxCI) & 1u)) {
+            if (p->ev && ahci_irq_seen && !ahci_irq_logged) {
+                ahci_irq_logged = 1;
+                oa_host_log(OA_LOG_INFO, "AHCI: interrupt-driven completion\n");
+            }
             break;
         }
         if (oa_host_time_us() > end) {
             port_recover(p, 1);
             return OA_HOST_TIMEOUT;
         }
+        if (p->ev)
+            oa_host_event_wait(p->ev, 1000u); /* sleep on the IRQ, re-check on wake */
     }
     oa_host_mb(); /* completion before the data */
     *tfd = rd(p->regs, PxTFD);
@@ -501,6 +543,24 @@ int ahciaspi_probe_ahci(oa_u32 pci)
         nport_pool++;
         c->ports[c->nports++] = p;
         found++;
+    }
+
+    /* Interrupt-driven completion: one MSI for the controller, demultiplexed to
+     * the ports through HBA_IS. On any failure the ports keep polling (ev stays
+     * NULL), so this never regresses a working controller. Enable the per-port
+     * completion/error interrupts and the global interrupt only once the MSI is
+     * in place. */
+    if (c->nports && oa_host_pci_msi(pci, ahci_irq, c) >= 0) {
+        for (i = 0; i < c->nports; i++) {
+            struct port *p = c->ports[i];
+            p->ev = oa_host_event_create();
+            if (!p->ev) {
+                continue;
+            }
+            wr(p->regs, PxIS, 0xFFFFFFFFul); /* clear stale causes */
+            wr(p->regs, PxIE, PxIE_MASK);    /* enable completion + error IRQs */
+        }
+        wr(c->abar, HBA_GHC, rd(c->abar, HBA_GHC) | GHC_IE);
     }
 
     memcpy(c->name, "AHCI 0000:00:00.0", 18);
