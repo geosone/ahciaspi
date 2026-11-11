@@ -65,6 +65,9 @@ struct ide_dev {
 struct ide_chan {
     oa_u16 cmd, ctl;
     struct ide_dev dev[2];
+    oa_host_event *ev;      /* completion event, NULL = poll this channel */
+    oa_u32 irq;             /* the ISA IRQ line (14/15) when interrupt-driven */
+    volatile oa_u8 irq_status; /* status snapshot taken by the IRQ handler */
 };
 
 struct ide_adapter {
@@ -115,6 +118,54 @@ static int wait_status(struct ide_chan *ch, oa_u8 mask, oa_u8 value, oa_u32 ms)
             return -1;
         }
         oa_host_delay_us(1);
+    }
+}
+
+/* A device interrupt: read the primary status register -- which clears the
+ * device's INTRQ -- and signal the completion event so a blocked waiter wakes.
+ * Interrupt context: only register I/O and the event signal, nothing that
+ * blocks or allocates. */
+static volatile int ide_irq_seen;   /* an IDE interrupt was delivered + handled */
+static int ide_irq_logged;
+static void ide_irq(void *arg)
+{
+    struct ide_chan *ch = arg;
+    ch->irq_status = rd(ch, IDE_STATUS);
+    ide_irq_seen = 1;
+    oa_host_event_signal(ch->ev);
+}
+
+/* Wait until the device is no longer busy. On an interrupt-driven channel the
+ * thread blocks on the completion event while BSY is set -- the device raises
+ * an INTRQ when it clears BSY (the next PIO block is ready, or the command is
+ * done) -- so the CPU is free during the transfer instead of spinning on the
+ * status port. The cheap alt-status read first returns at once when data is
+ * already available, which keeps multi-sector PIO correct (one INTRQ can cover
+ * several sectors, with DRQ staying set) and needs no interrupt before the
+ * first data-out block (there is none). The event wait is sliced so a missed
+ * interrupt only degrades to a 1 ms poll, never a hang. Polled channels spin as
+ * before. Returns the status (BSY clear), or -1 on timeout / floating bus. */
+static int ata_wait(struct ide_chan *ch, oa_u32 ms)
+{
+    oa_u64 end;
+    if (!ch->ev)
+        return wait_status(ch, ST_BSY, 0, ms);
+    end = oa_host_time_us() + (oa_u64)ms * 1000u;
+    for (;;) {
+        oa_u8 s = oa_host_inb(ch->ctl); /* alt status: does not clear INTRQ */
+        if (s == 0xFFu)
+            return -1;              /* floating bus */
+        if (!(s & ST_BSY)) {
+            if (ide_irq_seen && !ide_irq_logged) {
+                ide_irq_logged = 1;
+                oa_host_log(OA_LOG_INFO,
+                            "IDE: interrupt-driven completion (IRQ %u)\n", ch->irq);
+            }
+            return s;
+        }
+        if (oa_host_time_us() >= end)
+            return -1;
+        oa_host_event_wait(ch->ev, 1000u); /* sleep on the IRQ, re-check on wake */
     }
 }
 
@@ -222,12 +273,14 @@ static int ata_cmd(void *ctx, struct oa_ata_cmd *c)
     wr(ch, IDE_LBA0, (oa_u8)c->lba);
     wr(ch, IDE_LBA1, (oa_u8)(c->lba >> 8));
     wr(ch, IDE_LBA2, (oa_u8)(c->lba >> 16));
+    if (ch->ev)
+        oa_host_event_reset(ch->ev);	/* drop any stale INTRQ before issuing */
     wr(ch, IDE_COMMAND, c->command);
     delay400(ch);
 
     if (c->dir == OA_DIR_OUT) {
         while (left != 0u) {
-            st = wait_status(ch, ST_BSY, 0, timeout);
+            st = ata_wait(ch, timeout);
             if (st < 0) {
                 return OA_HOST_TIMEOUT;
             }
@@ -239,7 +292,7 @@ static int ata_cmd(void *ctx, struct oa_ata_cmd *c)
         }
     } else if (c->dir == OA_DIR_IN) {
         while (left != 0u) {
-            st = wait_status(ch, ST_BSY, 0, timeout);
+            st = ata_wait(ch, timeout);
             if (st < 0) {
                 return OA_HOST_TIMEOUT;
             }
@@ -466,6 +519,29 @@ int ahciaspi_probe_ide_ports(const oa_u16 cmd[2], const oa_u16 ctl[2], const cha
     }
     if (found == 0u) {
         return 0;
+    }
+    /* Arm interrupt-driven completion on the legacy channels (IRQ 14/15). On
+     * success the channel's PIO data phases block on the IRQ instead of
+     * spinning; on any failure ch->ev stays NULL and the channel just polls, so
+     * this never regresses a working adapter. Native-mode channels (IRQ from
+     * the PCI line) keep polling until that path is wired. */
+    for (i = 0; i < a->nchan; i++) {
+        struct ide_chan *ch = &a->chan[i];
+        oa_u32 irq = ch->cmd == 0x1F0u ? 14u : ch->cmd == 0x170u ? 15u : 0u;
+        if (ch->cmd == 0u || (!ch->dev[0].present && !ch->dev[1].present) || irq == 0u) {
+            continue;
+        }
+        ch->ev = oa_host_event_create();
+        if (!ch->ev) {
+            continue;
+        }
+        if (oa_host_irq_request(irq, ide_irq, ch) < 0) {
+            oa_host_event_destroy(ch->ev);
+            ch->ev = NULL;
+            continue;
+        }
+        ch->irq = irq;
+        oa_host_outb(ch->ctl, 0); /* Device Control: nIEN=0, let INTRQ through */
     }
     for (i = 0; i < sizeof(a->name) - 1u && name[i]; i++) {
         a->name[i] = name[i];
