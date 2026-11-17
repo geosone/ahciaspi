@@ -26,8 +26,8 @@ echo 'DEVICE=A:\XMGR.SYS|DOS=HIGH|DEVICE=A:\UDVD2.SYS /D:MSCD001|FILES=30|LASTDR
 # setup adds its lines before the last line: A:\RUN.BAT does the steps
 echo '@ECHO OFF|LH A:\MSCDEX.EXE /D:MSCD001 /L:R /M:10|A:\RUN.BAT' | crlf > "$OUT/AUTOEXEC.BAT"
 echo '@ECHO OFF|ECHO --- setup > AUX|C:\PKG\INSTALL.EXE /S:A:\ANS.INI > AUX|ECHO --- CONFIG.SYS > AUX|TYPE A:\CONFIG.SYS > AUX|ECHO --- AUTOEXEC.BAT > AUX|TYPE A:\AUTOEXEC.BAT > AUX|A:\QEXIT' | crlf > "$OUT/RUN1.BAT"
-echo '@ECHO OFF|ECHO --- R: > AUX|DIR R:\ > AUX|ECHO --- S: > AUX|DIR S:\ > AUX|ECHO --- end > AUX|A:\QEXIT' | crlf > "$OUT/RUN2.BAT"
-echo '@ECHO OFF|ECHO --- INSTALL /U > AUX|C:\OPENASPI\AHCIASPI\INSTALL.EXE /U > AUX|ECHO --- CONFIG.SYS > AUX|TYPE A:\CONFIG.SYS > AUX|ECHO --- AUTOEXEC.BAT > AUX|TYPE A:\AUTOEXEC.BAT > AUX|A:\QEXIT' | crlf > "$OUT/RUN3.BAT"
+echo '@ECHO OFF|ECHO --- R: > AUX|DIR R:\ > AUX|ECHO --- S: > AUX|DIR S:\ > AUX|ECHO --- tools > AUX|IF EXIST C:\OPENASPI\ASPICTL.EXE ECHO have ASPICTL > AUX|IF EXIST C:\OPENASPI\EJECT.EXE ECHO have EJECT > AUX|IF EXIST C:\OPENASPI\CLOSE.EXE ECHO have CLOSE > AUX|IF EXIST C:\OPENASPI\LOCK.EXE ECHO have LOCK > AUX|IF EXIST C:\OPENASPI\UNLOCK.EXE ECHO have UNLOCK > AUX|IF EXIST C:\OPENASPI\STATUS.EXE ECHO have STATUS > AUX|IF EXIST C:\OPENASPI\PROTECT.EXE ECHO have PROTECT > AUX|IF EXIST C:\OPENASPI\UNPROTEC.EXE ECHO have UNPROTEC > AUX|C:\OPENASPI\EJECT.EXE S: > AUX|IF NOT ERRORLEVEL 1 ECHO eject ok > AUX|ECHO --- end > AUX|A:\QEXIT' | crlf > "$OUT/RUN2.BAT"
+echo '@ECHO OFF|ECHO --- INSTALL /U > AUX|C:\OPENASPI\AHCIASPI\INSTALL.EXE /U > AUX|ECHO --- CONFIG.SYS > AUX|TYPE A:\CONFIG.SYS > AUX|ECHO --- AUTOEXEC.BAT > AUX|TYPE A:\AUTOEXEC.BAT > AUX|ECHO --- left > AUX|IF EXIST C:\OPENASPI\EJECT.EXE ECHO EJECT.EXE left > AUX|A:\QEXIT' | crlf > "$OUT/RUN3.BAT"
 echo '[Answers]|Dir=C:\OPENASPI' | crlf > "$OUT/ANS.INI"
 cp "$OUT/RUN1.BAT" "$OUT/RUN.BAT"
 mcopy -o -i "$OUT/a.img" "$OUT/CONFIG.SYS" "$OUT/AUTOEXEC.BAT" "$OUT/RUN.BAT" "$OUT/ANS.INI" "$OUT/QEXIT.COM" :: || exit 1
@@ -73,8 +73,13 @@ cfg, aut = part(log[0], "CONFIG.SYS", "AUTOEXEC.BAT"), part(log[0], "AUTOEXEC.BA
 assert cfg.index("DEVICE=C:\\OPENASPI\\AHCIASPI.SYS") < cfg.index("DEVICE=C:\\OPENASPI\\ASPICDA.SYS /D:ASPICDA0"), cfg
 assert "C:\\OPENASPI\\SHSUCDX.COM /D:MSCD001 /L:R /M:10 /D:ASPICDA0" in aut, aut
 assert "IDECD" in "".join(part(log[1], "R:", "S:")), "R: (IDE CD)"
-assert "AHCICD" in "".join(part(log[1], "S:", "end")), "S: (AHCI CD)"
-cfg3, aut3 = part(log[2], "CONFIG.SYS", "AUTOEXEC.BAT"), part(log[2], "AUTOEXEC.BAT", "xxx")
+assert "AHCICD" in "".join(part(log[1], "S:", "tools")), "S: (AHCI CD)"
+tools = part(log[1], "tools", "end")
+for t in ("ASPICTL", "EJECT", "CLOSE", "LOCK", "UNLOCK", "STATUS", "PROTECT", "UNPROTEC"):
+    assert "have " + t in tools, tools
+assert "eject ok" in tools, tools
+cfg3, aut3 = part(log[2], "CONFIG.SYS", "AUTOEXEC.BAT"), part(log[2], "AUTOEXEC.BAT", "left")
+assert "EJECT.EXE left" not in log[2], "INSTALL /U left EJECT.EXE"
 assert not any("OPENASPI" in l for l in cfg3), cfg3
 assert "LH A:\\MSCDEX.EXE /D:MSCD001 /L:R /M:10" in aut3, aut3
 print("AHCIASPI setup test passed")
