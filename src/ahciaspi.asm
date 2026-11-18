@@ -1473,6 +1473,29 @@ ide_packet:
         ret
 
 ;=============================================================================
+; Windows 3.x enhanced mode running (its INT 2Fh 1605h / 1606h broadcasts).
+; Only then is the critical section (INT 2Fh 1681h/1682h) asked for: other
+; V86 monitors (EMM386, JEMM) don't need it, and a DOS extended program
+; that hooks INT 2Fh itself (CauseWay: NTFS4DOS) can't take an INT 2Fh in
+; the middle of an INT 13h call it made.
+;=============================================================================
+win_enh         db      0
+old_int2f       dd      0
+int2f_hook:
+        cmp     ax, 1605h               ; Windows starts
+        je      .start
+        cmp     ax, 1606h               ; Windows ends
+        jne     .chain
+        test    dl, 1                   ; standard mode (DOSX): not ours
+        jnz     .chain
+        mov     byte [cs:win_enh], 0
+        jmp     .chain
+.start: test    dl, 1
+        jnz     .chain
+        mov     byte [cs:win_enh], 1
+.chain: jmp     far [cs:old_int2f]
+
+;=============================================================================
 ; ASPI entry point
 ;=============================================================================
 aspi_entry:
@@ -1487,6 +1510,8 @@ aspi_entry:
         ; Windows 3.x enhanced mode: no switch to another VM while we are
         ; in here (one driver state, one internal stack for all DOS boxes)
         xor     di, di
+        cmp     byte [cs:win_enh], 0
+        je      .nocs
         smsw    ax
         test    al, 1
         jz      .nocs
@@ -2760,6 +2785,15 @@ init:
 .fix:   call    bf_install
 .nofix:
 .resident:
+        push    es                      ; Windows start / end
+        mov     ax, 352Fh
+        int     21h
+        mov     [old_int2f], bx
+        mov     [old_int2f+2], es
+        pop     es
+        mov     dx, int2f_hook
+        mov     ax, 252Fh
+        int     21h
         les     bx, [req_ptr]
         mov     word [es:bx+RQ_END], resident_end
         mov     [es:bx+RQ_END+2], cs
