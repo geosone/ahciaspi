@@ -12,7 +12,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$ROOT/build/fastdisk
 BASE=${WIN311IMG:-$HOME/mars/eusbaspi/build/win311/win311.img}
 [ -f "$BASE" ] || { echo "no WfW image: $BASE"; exit 1; }
-make -s -C "$ROOT/vxd" LINK=${LINK:-$HOME/mars/386MAX/linux/bin/jwlink} || exit 1
+make -s -C "$ROOT/vxd" LINK=${LINK:-$HOME/mars/Open386MAX/linux/bin/jwlink} || exit 1
 rm -rf "$OUT"; mkdir -p "$OUT/c"
 cp "$BASE" "$OUT/test.img"
 cp "$ROOT/build/vxd/AHCIVXD.386" "$OUT/c/"
