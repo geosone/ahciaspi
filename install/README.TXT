@@ -1,4 +1,4 @@
-AHCIASPI 0.8 - ASPI manager for ATAPI drives on AHCI and IDE controllers
+AHCIASPI 0.9 - ASPI manager for ATAPI drives on AHCI and IDE controllers
 ==========================================================================
 
 AHCIASPI.SYS is an ASPI manager (device SCSIMGR$) for DOS.  It makes ATAPI
