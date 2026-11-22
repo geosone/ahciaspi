@@ -1269,6 +1269,14 @@ ide_irq_off:
         pop     ax
         ret
 
+; A PCI native-mode channel (an add-in controller) signals on a shared,
+; level-triggered PCI line that nobody services for it.  Two things hold
+; that line and flood whoever unmasks it later (a network driver under
+; Windows): a device left with nIEN, whose released INTRQ floats high at
+; the controller (seen on a Promise PDC20268), and a completion interrupt
+; nobody acknowledged.  So such a channel gets its interrupt back like a
+; legacy one, and the status register is read once more to take back
+; whatever the device raised meanwhile.
 ide_irq_on:
         pushf
         push    ax
@@ -1276,7 +1284,15 @@ ide_irq_on:
         mov     dx, [ide_ctl]
         mov     al, IDE_IEN
         out     dx, al
-        pop     dx
+        cmp     dx, 3F6h                ; legacy: IRQ 14/15 has a handler
+        je      .done
+        cmp     dx, 376h
+        je      .done
+        call    ide_delay
+        mov     dx, IDE_STATUS
+        call    ide_port
+        in      al, dx
+.done:  pop     dx
         pop     ax
         popf
         ret
