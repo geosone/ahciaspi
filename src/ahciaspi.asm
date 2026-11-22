@@ -3269,10 +3269,16 @@ setup_dma_area:
         mov     [phys_cl], eax
         add     eax, DMA_CT - DMA_CL
         mov     [phys_ct], eax
-        add     eax, DMA_SCRATCH - DMA_CT
-        mov     [phys_scratch], eax
-        add     eax, DMA_FIS - DMA_SCRATCH
+        add     eax, DMA_FIS - DMA_CT
         mov     [phys_fis], eax
+        push    edx
+        mov     ax, cs                  ; the scratch dword by its linear
+        movzx   eax, ax                 ; address: INT 15h AH=87h of a memory
+        shl     eax, 4                  ; manager moves in the address space
+        movzx   edx, word [scratch_ptr] ; of DOS, and a UMB is not where VDS
+        add     eax, edx                ; says it is
+        pop     edx
+        mov     [phys_scratch], eax
 
         mov     ax, cs                  ; flat mode GDT
         movzx   eax, ax
