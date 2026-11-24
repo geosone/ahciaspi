@@ -311,6 +311,13 @@ static int port_exec(struct port *p, const oa_u8 cfis[20], const oa_u8 *packet, 
             return (is & PxIS_TFES) ? OA_HOST_OK : OA_HOST_BUS_ERROR;
         }
         if (!(rd(p->regs, PxCI) & 1u)) {
+            /* The host may run this with interrupts masked and take the MSI
+               only while a thread blocks (GonWare). A command done before
+               the first look leaves its interrupt pending, so until one was
+               seen, wait for it briefly: the proof must not depend on how
+               fast the device completes. */
+            if (p->ev && !ahci_irq_seen)
+                oa_host_event_wait(p->ev, 1000u);
             if (p->ev && ahci_irq_seen && !ahci_irq_logged) {
                 ahci_irq_logged = 1;
                 oa_host_log(OA_LOG_INFO, "AHCI: interrupt-driven completion\n");
